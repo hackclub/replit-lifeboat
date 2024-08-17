@@ -1,0 +1,22 @@
+query ProfileRepls($after: String) {
+    user(id: 222834) {
+        profileRepls(after: $after, count: 100) {
+            # Max per page is 25
+            items {
+                id
+                title
+                url
+                description
+                isRenamed
+                isAlwaysOn
+                isProjectFork
+                likeCount
+                language
+            }
+            pageInfo {
+                hasNextPage
+                nextCursor
+            }
+        }
+    }
+}
