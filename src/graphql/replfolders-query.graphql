@@ -1,0 +1,95 @@
+query ReplsDashboardReplFolderList(
+    $path: String!
+    $starred: Boolean
+    $after: String
+) {
+    currentUser {
+        id
+        email
+        username
+        firstName
+        lastName
+        isVerified
+        displayName
+        fullName
+        url
+        bio
+        locale
+        location
+        recentReplsCount
+        isImpersonated
+        replFolderByPath(path: $path) {
+            id
+            ownerId: userId
+            pathnames
+            canEdit
+            canCreateSubFolders
+            parent {
+                id
+                pathnames
+            }
+            folders {
+                id
+                name
+                canEdit
+                pathnames
+                image
+                replsCount
+                folderType
+            }
+            repls(starred: $starred, after: $after) {
+                items {
+                    id
+                    title
+                    description
+                    isStarred
+                    isPrivate
+                    isOwner
+                    isAlwaysOn
+                    isBoosted
+                    owner {
+                        __typename
+                        ... on Team {
+                            username
+                            image
+                        }
+                        ... on User {
+                            username
+                            image
+                        }
+                    }
+                    bytesUsed {
+                        ... on ReplBytesUsed {
+                            value
+                            __typename
+                        }
+                        ... on NotFoundError {
+                            message
+                            __typename
+                        }
+                        ... on UnauthorizedError {
+                            message
+                            __typename
+                        }
+                        ... on ServiceUnavailable {
+                            message
+                            __typename
+                        }
+                        __typename
+                    }
+                    iconUrl
+                    publishedAs
+                    slug
+                    url
+                    hostedUrl
+                    templateInfo {
+                        label
+                    }
+                }
+                pageInfo {
+                    nextCursor
+                }
+            }
+        }
+    }
+}
