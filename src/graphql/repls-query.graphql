@@ -1,0 +1,16 @@
+query ReplsQuery($id: Int) {
+	user(id: $id) {
+		publicRepls(count: 100, order: "time_updated") {
+      			items {
+				id
+				title
+				description
+				isRenamed
+				isAlwaysOn
+				isProjectFork
+				likeCount
+				language
+      			}
+    		}
+  	}
+}
