@@ -56,20 +56,5 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     info!("{:#?}", repls_data);
 
-    /*
-    let response_body =
-        post_graphql::<RepoView, _>(&client, "https://replit.com/graphql", variables).unwrap();
-
-    info!("{:?}", response_body);
-
-    let response_data: repo_view::ResponseData = response_body.data.expect("missing response data");
-
-    let stars: Option<i64> = response_data
-        .repository
-        .as_ref()
-        .map(|repo| repo.stargazers.total_count);
-
-    println!("{}", stars.unwrap_or(0),);
-*/
     Ok(())
 }
