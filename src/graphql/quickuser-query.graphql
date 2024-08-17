@@ -1,0 +1,7 @@
+query QuickUserQuery {
+    currentUser {
+        id
+        username
+        email
+    }
+}

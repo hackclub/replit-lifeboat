@@ -6,6 +6,14 @@ use std::error::Error;
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "src/graphql/schema 7.graphql",
+    query_path = "src/graphql/quickuser-query.graphql",
+    response_derives = "Debug"
+)]
+pub struct QuickUserQuery;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/graphql/schema 7.graphql",
     query_path = "src/graphql/replfolders-query.graphql",
     response_derives = "Debug"
 )]
@@ -40,13 +48,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         .cookie_provider(jar)
         .build()?;
 
-    /*let mut current_user_res = client.post(REPLIT_GQL_URL).json(&UserQuery::build_query(user_query::Variables { })).send()?;
-    let current_user_data: Response<user_query::ResponseData> = current_user_res.json()?;
+    let user_data: Response<quick_user_query::ResponseData> = client
+        .post(REPLIT_GQL_URL)
+        .json(&QuickUserQuery::build_query(quick_user_query::Variables {}))
+        .send()?
+        .json()?;
 
-    let current_user = current_user_data.data.and_then(|data| data.current_user).expect("the current user data");
-    info!("{:#?}", current_user);
+    let username = user_data
+        .data
+        .and_then(|d| d.current_user)
+        .map(|u| u.username);
+    info!("Username: {:?}", username);
 
-    let repls_query_vars = repls_query::Variables { id: Some(current_user.id) };*/
     let repls_query =
         ReplsDashboardReplFolderList::build_query(repls_dashboard_repl_folder_list::Variables {
             path: "".to_string(),
@@ -54,10 +67,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             after: None,
         });
 
-    let mut repls_q = client.post(REPLIT_GQL_URL).json(&repls_query); //.build().expect("a req built");
-                                                                      //    trace!("{:#?}", repls_q.body());
-    let mut repls_res = repls_q.send()?;
-    let repls_data: Response<repls_dashboard_repl_folder_list::ResponseData> = repls_res.json()?;
+    let mut repls_query = client.post(REPLIT_GQL_URL).json(&repls_query).send()?;
+    let repls_data: Response<repls_dashboard_repl_folder_list::ResponseData> =
+        repls_query.json()?;
 
     info!("{:#?}", repls_data);
 
