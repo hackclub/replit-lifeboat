@@ -1,8 +1,10 @@
+use anyhow::Result;
+use crosisdownload::download;
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
 use reqwest::{cookie::Jar, header, Client, Url};
 use std::error::Error;
-use std::io::Write;
+use tokio::fs;
 
 mod crosisdownload;
 
@@ -33,7 +35,7 @@ pub struct ReplsDashboardReplFolderList;
 static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     env_logger::init();
 
     let connect_sid = std::env::args().nth(1).expect("a token");
@@ -56,8 +58,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let client = Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
-        .default_headers(headers)
-        .cookie_provider(jar)
+        .default_headers(headers.clone())
+        .cookie_provider(jar.clone())
         .build()?;
 
     let user_data: Response<quick_user_query::ResponseData> = client
@@ -68,11 +70,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .json()
         .await?;
 
-    let username = user_data
-        .data
-        .and_then(|d| d.current_user)
-        .map(|u| u.username);
-    info!("Username: {:?}", username);
+    let current_user = match user_data.data.and_then(|d| d.current_user) {
+        Some(user) => user,
+        None => todo!(),
+    };
+
+    info!("Username: {:?}", current_user.username);
 
     let repls_query =
         ReplsDashboardReplFolderList::build_query(repls_dashboard_repl_folder_list::Variables {
@@ -92,6 +95,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .post(REPLIT_GQL_URL)
         .json(&ProfileRepls::build_query(profile_repls::Variables {
             after: None,
+            id: current_user.id,
         }))
         .send()
         .await?
@@ -105,14 +109,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }),
     }) = profile_repls_data.data
     {
-        std::fs::create_dir_all("repls")?;
-        for repl in items.iter() {
-            let url = format!("https://replit.com{}.zip", repl.url);
-            info!("Downloading {} from {url}", repl.title);
-            let bytes = client.get(url).send().await?.bytes().await?;
-            debug!("{} is {} kB\n", repl.title, bytes.len() / 1_000);
-            let mut file = std::fs::File::create(format!("repls/{}.zip", &repl.title))?;
-            file.write_all(&bytes)?;
+        fs::create_dir_all("repls").await?;
+        for repl in items {
+            download(
+                headers.clone(),
+                jar.clone(),
+                repl.id,
+                &repl.title,
+                &format!("repls/{}.zip", &repl.title),
+            )
+            .await?;
+
+            todo!("Make one repl download work")
+            // let url = format!("https://replit.com{}.zip", repl.url);
+            // info!("Downloading {} from {url}", repl.title);
+            // let bytes = client.get(url).send().await?.bytes().await?;
+            // debug!("{} is {} kB\n", repl.title, bytes.len() / 1_000);
+            // let mut file = std::fs::File::create(format!("repls/{}.zip", &repl.title))?;
+            // file.write_all(&bytes)?;
         }
     }
 
