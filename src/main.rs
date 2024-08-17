@@ -1,8 +1,10 @@
-use graphql_client::{reqwest::post_graphql_blocking as post_graphql, GraphQLQuery, Response};
+use graphql_client::{GraphQLQuery, Response};
 use log::*;
-use reqwest::{blocking::Client, cookie::Jar, header, Url};
+use reqwest::{cookie::Jar, header, Client, Url};
 use std::error::Error;
 use std::io::Write;
+
+mod crosisdownload;
 
 #[derive(GraphQLQuery)]
 #[graphql(
@@ -30,7 +32,8 @@ pub struct ReplsDashboardReplFolderList;
 
 static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
     let connect_sid = std::env::args().nth(1).expect("a token");
@@ -60,8 +63,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let user_data: Response<quick_user_query::ResponseData> = client
         .post(REPLIT_GQL_URL)
         .json(&QuickUserQuery::build_query(quick_user_query::Variables {}))
-        .send()?
-        .json()?;
+        .send()
+        .await?
+        .json()
+        .await?;
 
     let username = user_data
         .data
@@ -88,8 +93,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         .json(&ProfileRepls::build_query(profile_repls::Variables {
             after: None,
         }))
-        .send()?
-        .json()?;
+        .send()
+        .await?
+        .json()
+        .await?;
 
     if let Some(profile_repls::ResponseData {
         user:
@@ -102,7 +109,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         for repl in items.iter() {
             let url = format!("https://replit.com{}.zip", repl.url);
             info!("Downloading {} from {url}", repl.title);
-            let bytes = client.get(url).send()?.bytes()?;
+            let bytes = client.get(url).send().await?.bytes().await?;
             debug!("{} is {} kB\n", repl.title, bytes.len() / 1_000);
             let mut file = std::fs::File::create(format!("repls/{}.zip", &repl.title))?;
             file.write_all(&bytes)?;
