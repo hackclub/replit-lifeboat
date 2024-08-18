@@ -389,8 +389,8 @@ dependencies = [
 
 [[package]]
 name = "crosis"
-version = "0.1.0"
-source = "git+https://github.com/PotentialStyx/crosis-rust.git#163e52eea0a0f8d7013ed57da9078c692c01e969"
+version = "0.2.0"
+source = "git+https://github.com/PotentialStyx/crosis-rust.git#1f9557288b6e14663424c42771dfddf5fc2dec99"
 dependencies = [
  "async-trait",
  "fastrand",
@@ -399,7 +399,6 @@ dependencies = [
  "prost-build",
  "prost-types",
  "readonly",
- "reqwest 0.11.27",
  "serde",
  "serde_json",
  "thiserror",
@@ -1989,6 +1988,8 @@ checksum = "7a66a03ae7c801facd77a29370b4faec201768915ac14a721ba36f20bc9c209b"
 name = "replit-takeout"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "airtable-api",
  "crosis",
  "dotenv",
