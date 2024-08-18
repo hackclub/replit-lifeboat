@@ -8,6 +8,7 @@ use crosis::{
     goval::{self, command::Body, Command},
     Channel, Client,
 };
+use git2::{Repository, Signature, Time};
 use log::{debug, error, info, warn};
 use metadata::CookieJarConnectionMetadataFetcher;
 use reqwest::{cookie::Jar, header::HeaderMap};
@@ -15,7 +16,7 @@ use ropey::Rope;
 use serde::Serialize;
 use time::OffsetDateTime;
 use tokio::{fs, io::AsyncWriteExt};
-use util::{do_ot, normalize_ts};
+use util::{do_ot, normalize_ts, recursively_flatten_dir};
 
 // Files to ignore for history and commits
 static NO_GO: [&str; 8] = [
@@ -189,7 +190,7 @@ pub async fn download(
     let staging_loc = if is_git {
         None
     } else {
-        Some(download_locations.staging_git)
+        Some(download_locations.staging_git.clone())
     };
 
     // Chunk file fetching to not open like 500 channels at the same time
@@ -223,6 +224,19 @@ pub async fn download(
     info!("Read file history for {replid}::{replname}");
 
     handle.await??;
+
+    info!("Downloaded final file contents for {replid}::{replname}");
+
+    if staging_loc.is_some() {
+        build_git(
+            download_locations.staging_git,
+            download_locations.git,
+            ts_offset,
+        )
+        .await?;
+
+        info!("Built git repo from history snapshots for {replid}::{replname}");
+    }
 
     // let repo = tokio::task::spawn_blocking(move || {
     //     match git2::Repository::open(&download_locations.main) {
@@ -291,10 +305,7 @@ pub async fn handle_file(
             fs::create_dir_all(parent).await?;
         }
 
-        info!(
-            "{filename} has no history... {path:#?} {:#?}",
-            path.parent()
-        );
+        info!("{filename} has no history...");
         fs::write(path, "[]").await?;
 
         return Ok(());
@@ -433,6 +444,98 @@ pub async fn handle_file(
     fs::write(path, serde_json::to_string(&new_history)?).await?;
 
     info!("Downloaded history for {filename}");
+    Ok(())
+}
+
+pub async fn build_git(staging_dir: String, git_dir: String, global_ts: i64) -> Result<()> {
+    let git_dir2 = git_dir.clone();
+    let mut repo = tokio::task::spawn_blocking(move || -> Result<Repository> {
+        let repo = git2::Repository::init(&git_dir2)?;
+        {
+            let author = Signature::new(
+                "Replit Takeout",
+                "malted@hackclub.com",
+                &Time::new(global_ts, 0),
+            )?;
+
+            let mut index = repo.index()?;
+            let oid = index.write_tree()?;
+            let tree = repo.find_tree(oid)?;
+
+            repo.commit(Some("HEAD"), &author, &author, "Initial Commit", &tree, &[])?;
+        }
+
+        Ok(repo)
+    })
+    .await??;
+
+    let mut timestamps: Vec<i64> = vec![];
+    let mut reader = fs::read_dir(&staging_dir).await?;
+    while let Some(entry) = reader.next_entry().await? {
+        if entry.file_type().await?.is_dir() {
+            timestamps.push(
+                entry
+                    .file_name()
+                    .into_string()
+                    .expect("This is only [0-9]*")
+                    .parse()
+                    .expect("Garunteed to parse"),
+            )
+        }
+    }
+
+    timestamps.sort_unstable();
+
+    for snapshot in timestamps {
+        let head = format!("{staging_dir}{snapshot}");
+        let files = recursively_flatten_dir(head.clone()).await?;
+        let head_prefix = head.clone() + "/";
+
+        for file in files {
+            let file = file.strip_prefix(&head_prefix).unwrap_or(&file);
+
+            let to_buf = format!("{git_dir}{file}");
+            let to = Path::new(&to_buf);
+
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            fs::rename(format!("{head}/{file}"), to).await?;
+        }
+
+        repo = tokio::task::spawn_blocking(move || -> Result<Repository> {
+            {
+                let mut index = repo.index()?;
+                index.add_all(["."], git2::IndexAddOption::DEFAULT, None)?;
+                index.write()?;
+
+                let oid = index.write_tree()?;
+                let parent_commit = repo.head()?.peel_to_commit()?;
+                let tree = repo.find_tree(oid)?;
+
+                // TODO: Put real email here
+                let author = Signature::new(
+                    "Replit Takeout",
+                    "malted@hackclub.com",
+                    &Time::new(snapshot, 0),
+                )?;
+
+                repo.commit(
+                    Some("HEAD"),
+                    &author,
+                    &author,
+                    "History snapshot",
+                    &tree,
+                    &[&parent_commit],
+                )?;
+            }
+
+            Ok(repo)
+        })
+        .await??;
+    }
+
     Ok(())
 }
 

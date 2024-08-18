@@ -2,6 +2,8 @@ use anyhow::{format_err, Result};
 use crc32fast::Hasher;
 use crosis::goval::{self, OtPacket};
 use ropey::Rope;
+use std::path::Path;
+use tokio::fs;
 
 const STEP_SIZE: i64 = 60 * 60;
 const STEP_SIZE_HALF: i64 = STEP_SIZE / 2;
@@ -62,4 +64,49 @@ pub fn do_ot(contents: &mut Rope, ot: &OtPacket) -> Result<()> {
     } else {
         Err(format_err!("Expected crc32 to be {} got {crc32}", ot.crc32))
     }
+}
+
+pub async fn recursively_flatten_dir(dir: String) -> Result<Vec<String>> {
+    let mut fres = fs::read_dir(&dir).await?;
+
+    let mut path = dir;
+
+    let mut files_list = vec![];
+    let mut to_check_dirs = vec![];
+
+    loop {
+        while let Some(file) = fres.next_entry().await? {
+            let fname = if let Ok(string) = file.file_name().into_string() {
+                string
+            } else {
+                return Err(format_err!("Invalid file path"));
+            };
+
+            let fpath: String = if path.is_empty() {
+                fname
+            } else {
+                path.clone() + "/" + &fname
+            };
+
+            let ftype = file.file_type().await?;
+
+            if ftype.is_dir() {
+                to_check_dirs.push(fpath)
+            } else if ftype.is_file() {
+                files_list.push(fpath);
+            } else {
+                return Err(format_err!("Invalid file in dir"));
+            }
+        }
+
+        if let Some(npath) = to_check_dirs.pop() {
+            path = npath;
+
+            fres = fs::read_dir(&path).await?;
+        } else {
+            break;
+        }
+    }
+
+    Ok(files_list)
 }
