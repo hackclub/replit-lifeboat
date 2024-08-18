@@ -46,7 +46,8 @@ impl ConnectionMetadataFetcher for CookieJarConnectionMetadataFetcher {
                     eprintln!("{err:#?}");
                     return Err(FetchConnectionMetadataError::Abort);
                 }
-                _ => {
+                Ok(other) => {
+                    eprintln!("Connection metadata request failed: {other}");
                     return Err(FetchConnectionMetadataError::Abort);
                 }
             }
