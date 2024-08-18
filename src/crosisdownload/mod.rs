@@ -1,4 +1,5 @@
 mod metadata;
+mod util;
 
 use std::{path::Path, sync::Arc, time::Duration};
 
@@ -7,11 +8,14 @@ use crosis::{
     goval::{self, command::Body, Command},
     Channel, Client,
 };
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use metadata::CookieJarConnectionMetadataFetcher;
 use reqwest::{cookie::Jar, header::HeaderMap};
+use ropey::Rope;
 use serde::Serialize;
-use tokio::fs;
+use time::OffsetDateTime;
+use tokio::{fs, io::AsyncWriteExt};
+use util::{do_ot, normalize_ts};
 
 // Files to ignore for history and commits
 static NO_GO: [&str; 8] = [
@@ -26,13 +30,20 @@ static NO_GO: [&str; 8] = [
 ];
 const MAX_FILE_PARALLELISM: usize = 20;
 
+pub struct DownloadLocations {
+    pub main: String,
+    pub git: String,
+    pub staging_git: String,
+    pub ot: String,
+}
+
 pub async fn download(
     headers: HeaderMap,
     jar: Arc<Jar>,
     replid: String,
     replname: &str,
-    main_download: String,
-    ot_download: String,
+    download_locations: DownloadLocations,
+    ts_offset: i64,
 ) -> Result<()> {
     debug!("https://replit.com/replid/{}", &replid);
 
@@ -69,6 +80,7 @@ pub async fn download(
     info!("Obtained gcsfiles for {replid}::{replname}");
 
     let mut files_list = vec![];
+    let mut is_git = false;
 
     // Scope all the temporary file stuff
     {
@@ -88,7 +100,7 @@ pub async fn download(
             if let Some(Body::Files(files)) = fres.body {
                 for file in files.files {
                     let fpath = if path.is_empty() {
-                        file.path.clone()
+                        file.path
                     } else {
                         path.clone() + "/" + &file.path
                     };
@@ -99,7 +111,12 @@ pub async fn download(
                     }
 
                     match goval::file::Type::from_i32(file.r#type) {
-                        Some(goval::file::Type::Directory) => to_check_dirs.push(fpath),
+                        Some(goval::file::Type::Directory) => {
+                            if fpath == ".git" {
+                                is_git = true;
+                            }
+                            to_check_dirs.push(fpath)
+                        }
                         Some(goval::file::Type::Regular) => files_list.push(fpath),
                         _ => {
                             error!("bruh")
@@ -132,6 +149,7 @@ pub async fn download(
     // Sadly have to clone if want main file downloads in parallel with ot downloads
     // Should test / benchmark if time is available.
     let files_list2 = files_list.clone();
+    let main_download = download_locations.main.clone();
     let handle = tokio::spawn(async move {
         for path in &files_list2 {
             let download_path = format!("{main_download}{path}");
@@ -164,6 +182,16 @@ pub async fn download(
         Ok(())
     });
 
+    if is_git {
+        warn!("History -> git not currently supported for existing git repos")
+    }
+
+    let staging_loc = if is_git {
+        None
+    } else {
+        Some(download_locations.staging_git)
+    };
+
     // Chunk file fetching to not open like 500 channels at the same time
     for chunk in files_list.chunks(MAX_FILE_PARALLELISM) {
         let mut set = tokio::task::JoinSet::new();
@@ -175,11 +203,13 @@ pub async fn download(
                     Some(goval::open_channel::Action::AttachOrCreate),
                 )
                 .await?;
+
             set.spawn(handle_file(
                 file_channel,
-                format!("{ot_download}{file}"),
+                format!("{}{file}", download_locations.ot),
+                staging_loc.clone(),
                 file.clone(),
-                0,
+                ts_offset,
             ));
         }
 
@@ -190,10 +220,20 @@ pub async fn download(
         }
     }
 
-    handle.await??;
-
     info!("Read file history for {replid}::{replname}");
 
+    handle.await??;
+
+    // let repo = tokio::task::spawn_blocking(move || {
+    //     match git2::Repository::open(&download_locations.main) {
+    //         Err(err) => {
+    //             dbg!(err.code());
+    //             None
+    //         }
+    //         Ok(repo) => Some(repo),
+    //     }
+    // })
+    // .await?;
     // client.destroy().await?;
 
     info!("Disconnected from {replid}::{replname}");
@@ -204,8 +244,9 @@ pub async fn download(
 pub async fn handle_file(
     mut channel: Channel,
     local_filename: String,
+    staging_dir: Option<String>,
     filename: String,
-    _global_ts: u64,
+    global_ts: i64,
 ) -> Result<()> {
     // TODO: do other stuff l8r
     if filename.starts_with(".git") {
@@ -250,7 +291,10 @@ pub async fn handle_file(
             fs::create_dir_all(parent).await?;
         }
 
-        info!("{filename} has no history...");
+        info!(
+            "{filename} has no history... {path:#?} {:#?}",
+            path.parent()
+        );
         fs::write(path, "[]").await?;
 
         return Ok(());
@@ -273,6 +317,88 @@ pub async fn handle_file(
         _ => return Err(format_err!("Invalid OtFetchResponse: {:#?}", res.body)),
     };
 
+    // GIT STUFF!
+    if let Some(staging) = staging_dir {
+        if !history.packets.is_empty() {
+            let mut contents = Rope::new();
+
+            let mut timestamp = normalize_ts(
+                history
+                    .packets
+                    .first()
+                    .expect("Has to exist")
+                    .committed
+                    .as_ref()
+                    .map(|ts| ts.seconds)
+                    .unwrap_or(0),
+                global_ts,
+            );
+
+            for packet in &history.packets {
+                let new_ts = normalize_ts(
+                    packet.committed.as_ref().map(|ts| ts.seconds).unwrap_or(0),
+                    global_ts,
+                );
+
+                if new_ts != timestamp {
+                    let staging_ts_path = format!("{staging}{timestamp}/{filename}");
+                    let path = Path::new(&staging_ts_path);
+
+                    if let Some(parent) = path.parent() {
+                        fs::create_dir_all(parent).await?;
+                    }
+
+                    let mut file_writer = fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open(path)
+                        .await?;
+
+                    for chunk in contents.chunks() {
+                        let bytes = chunk.as_bytes();
+
+                        file_writer.write_all(bytes).await?;
+                    }
+
+                    file_writer.flush().await?;
+                    file_writer.sync_data().await?;
+
+                    drop(file_writer);
+
+                    timestamp = new_ts;
+                }
+
+                do_ot(&mut contents, packet)?;
+            }
+
+            let staging_ts_path_final = format!("{staging}{timestamp}/{filename}");
+            let path = Path::new(&staging_ts_path_final);
+
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            let mut file_writer = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&path)
+                .await?;
+
+            for chunk in contents.chunks() {
+                let bytes = chunk.as_bytes();
+
+                file_writer.write_all(bytes).await?;
+            }
+
+            file_writer.flush().await?;
+            file_writer.sync_data().await?;
+
+            drop(file_writer);
+        }
+    }
+
     let mut new_history = vec![];
 
     for item in history.packets {
@@ -284,10 +410,16 @@ pub async fn handle_file(
                 goval::ot_op_component::OpComponent::Insert(text) => OtOp::Insert(text),
             })
         }
+
+        let timestamp = item.committed.map(|ts| ts.seconds).unwrap_or(0);
         new_history.push(OtFetchPacket {
             ops,
             crc32: item.crc32,
-            timestamp: item.committed.map(|ts| ts.seconds).unwrap_or(0),
+            timestamp,
+            ts_string: format!(
+                "{}",
+                OffsetDateTime::from_unix_timestamp(normalize_ts(timestamp, global_ts))?
+            ),
             version: item.version,
         })
     }
@@ -310,6 +442,7 @@ struct OtFetchPacket {
     ops: Vec<OtOp>,
     crc32: u32,
     timestamp: i64,
+    ts_string: String,
     version: u32,
 }
 

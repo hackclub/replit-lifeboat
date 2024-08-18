@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crosisdownload::download;
+use crosisdownload::{download, DownloadLocations};
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
 use reqwest::{cookie::Jar, header, Client, Url};
@@ -119,11 +119,21 @@ async fn main() -> Result<()> {
         fs::create_dir(format!("repls/{}", current_user.username)).await?;
 
         for repl in items {
-            let location = format!("repls/{}/{}/", current_user.username, repl.slug);
-            let location2 = format!("repls/{}/{}.otbackup/", current_user.username, repl.slug);
+            // TODO: remove this
+            if &repl.slug == "crosis-3" {
+                continue; // Takes too long and makes testing a pita
+            }
 
-            fs::create_dir(&location).await?;
-            fs::create_dir(&location2).await?;
+            let main_location = format!("repls/{}/{}/", current_user.username, repl.slug);
+            let git_location = format!("repls/{}/{}.git/", current_user.username, repl.slug);
+            let staging_git_location =
+                format!("repls/{}/{}.gitstaging/", current_user.username, repl.slug);
+            let ot_location = format!("repls/{}/{}.otbackup/", current_user.username, repl.slug);
+
+            fs::create_dir(&main_location).await?;
+            fs::create_dir(&git_location).await?;
+            fs::create_dir(&staging_git_location).await?;
+            fs::create_dir(&ot_location).await?;
 
             let ts = OffsetDateTime::parse(&repl.time_created, &Rfc3339)?;
 
@@ -134,13 +144,18 @@ async fn main() -> Result<()> {
                 jar.clone(),
                 repl.id.clone(),
                 &repl.slug,
-                location.clone(),
-                location2.clone(),
+                DownloadLocations {
+                    main: main_location.clone(),
+                    git: git_location.clone(),
+                    staging_git: staging_git_location.clone(),
+                    ot: ot_location.clone(),
+                },
+                ts.unix_timestamp(),
             )
             .await?;
 
             info!(
-                "Downloaded {} to {location} with ots in {location2}",
+                "Downloaded {} to {main_location} with git (if not already existant) in {git_location} and ots in {ot_location}",
                 repl.id
             )
 
