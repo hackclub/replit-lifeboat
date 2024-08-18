@@ -75,7 +75,8 @@ pub async fn download(
         replid: replid.clone(),
     }));
 
-    let mut chan0 = client.connect().await?;
+    // Will take up to a max of 2 minutes until it fails if ratelimited
+    let mut chan0 = client.connect_max_retries(5).await?;
 
     info!("Connected to {replid}::{replname}");
     {

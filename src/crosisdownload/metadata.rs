@@ -37,8 +37,19 @@ impl ConnectionMetadataFetcher for CookieJarConnectionMetadataFetcher {
 
             // TODO: log error once tracing
 
-            eprintln!("{:#?}", response.text().await);
-            return Err(FetchConnectionMetadataError::Abort);
+            match response.text().await.as_ref().map(|txt| txt.as_str()) {
+                Ok("Repl temporarily unavailable") => {
+                    eprintln!("Repl temporarily unavailable");
+                    return Err(FetchConnectionMetadataError::Retriable);
+                }
+                Err(err) => {
+                    eprintln!("{err:#?}");
+                    return Err(FetchConnectionMetadataError::Abort);
+                }
+                _ => {
+                    return Err(FetchConnectionMetadataError::Abort);
+                }
+            }
         }
 
         match response.json().await {
