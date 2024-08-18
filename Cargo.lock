@@ -266,7 +266,6 @@ dependencies = [
 [[package]]
 name = "crosis"
 version = "0.2.0"
-source = "git+https://github.com/PotentialStyx/crosis-rust.git#1f9557288b6e14663424c42771dfddf5fc2dec99"
 dependencies = [
  "async-trait",
  "fastrand",
@@ -1271,6 +1270,7 @@ dependencies = [
  "log",
  "reqwest 0.12.5",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

@@ -110,17 +110,23 @@ async fn main() -> Result<()> {
     }) = profile_repls_data.data
     {
         fs::create_dir_all("repls").await?;
+
         for repl in items {
+            fs::create_dir(format!("repls/{}", repl.id)).await?;
+
+            let location = format!("repls/{}/", &repl.id);
+
             download(
                 headers.clone(),
                 jar.clone(),
-                repl.id,
-                &repl.title,
-                &format!("repls/{}.zip", &repl.title),
+                repl.id.clone(),
+                &repl.slug,
+                location.clone(),
             )
             .await?;
 
-            todo!("Make one repl download work")
+            info!("Downloaded {} to {location}", repl.id)
+
             // let url = format!("https://replit.com{}.zip", repl.url);
             // info!("Downloading {} from {url}", repl.title);
             // let bytes = client.get(url).send().await?.bytes().await?;

@@ -4,6 +4,7 @@ query ProfileRepls($after: String, $id: Int!) {
 			# Max per page is 25
 			items {
 				id
+				slug
 				title
 				url
 				description
