@@ -15,7 +15,7 @@ use lettre::{
 //     pub name: &'a str,
 // }
 
-pub async fn send_email(to: String, subject: String, body: String) -> bool {
+pub async fn send_email(to: &String, subject: String, body: String) -> bool {
     // "Malted <malted@hackclub.com>"
     let email = Message::builder()
         .from("Hack Club <malted@hackclub.com>".parse().unwrap())

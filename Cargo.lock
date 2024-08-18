@@ -1988,9 +1988,9 @@ checksum = "7a66a03ae7c801facd77a29370b4faec201768915ac14a721ba36f20bc9c209b"
 name = "replit-takeout"
 version = "0.1.0"
 dependencies = [
+ "airtable-api",
  "anyhow",
  "async-trait",
- "airtable-api",
  "crosis",
  "dotenv",
  "env_logger",

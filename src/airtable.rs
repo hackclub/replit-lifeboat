@@ -15,7 +15,7 @@ pub struct AirtableSyncedUser {
     pub username: String,
 
     #[serde(rename = "Email")]
-    pub email: Option<String>,
+    pub email: String,
 
     #[serde(rename = "Status")]
     pub status: ProcessState,
@@ -40,7 +40,7 @@ pub async fn add_user(user: AirtableSyncedUser) -> bool {
 
 pub async fn get_records() {
     // Get the current records from a table.
-    let mut records: Vec<Record<AirtableSyncedUser>> = AIRTABLE
+    let records: Vec<Record<AirtableSyncedUser>> = AIRTABLE
         .list_records(
             TABLE,
             "Grid view",

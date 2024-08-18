@@ -1,12 +1,53 @@
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
-use reqwest::{cookie::Jar, header, Client, Url};
+use reqwest::{
+    cookie::Jar,
+    header::{self, HeaderMap},
+    Client, Url,
+};
 use std::error::Error;
-use std::io::Write;
+use std::sync::Arc;
+use tokio::fs;
 
 use serde::Deserialize;
 
 static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
+
+fn create_client_headers() -> HeaderMap {
+    let mut headers = header::HeaderMap::new();
+    headers.insert(
+        "X-Requested-With",
+        header::HeaderValue::from_static("XMLHttpRequest"),
+    );
+    headers.insert(
+        reqwest::header::REFERER,
+        header::HeaderValue::from_static("https://replit.com/~"),
+    );
+
+    headers
+}
+
+fn create_client_cookie_jar(token: &String) -> Arc<Jar> {
+    let cookie = &format!("connect.sid={token}; Domain=replit.com");
+    let url = REPLIT_GQL_URL.parse::<Url>().unwrap();
+
+    let jar = Jar::default();
+    jar.add_cookie_str(cookie, &url);
+
+    Arc::new(jar)
+}
+
+fn create_client(token: &String, client: Option<Client>) -> Result<Client, reqwest::Error> {
+    if client.is_some() {
+        return Ok(client.expect("a client to be inside the option"));
+    }
+
+    Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
+        .default_headers(create_client_headers())
+        .cookie_provider(create_client_cookie_jar(&token))
+        .build()
+}
 
 #[derive(GraphQLQuery)]
 #[graphql(
@@ -16,49 +57,35 @@ static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
 )]
 pub struct QuickUserQuery;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct QuickUser {
     pub id: i64,
     pub username: String,
     pub email: Option<String>,
 }
 impl QuickUser {
-    pub async fn fetch(token: String) -> Result<Self, Box<dyn std::error::Error>> {
-        let cookie = &format!("connect.sid={token}; Domain=replit.com");
-        let url = "https://replit.com/graphql".parse::<Url>().unwrap();
+    pub async fn fetch(
+        token: &String,
+        client_opt: Option<Client>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let client = create_client(token, client_opt)?;
 
-        let jar = std::sync::Arc::new(Jar::default());
-        jar.add_cookie_str(cookie, &url);
-
-        let mut headers = header::HeaderMap::new();
-        headers.insert(
-            "X-Requested-With",
-            header::HeaderValue::from_static("XMLHttpRequest"),
-        );
-        headers.insert(
-            reqwest::header::REFERER,
-            header::HeaderValue::from_static("https://replit.com/~"),
-        );
-
-        let client = Client::builder()
-            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
-            .default_headers(headers)
-            .cookie_provider(jar)
-            .build()?;
-
-        let user_data: reqwest::Response = client
+        let user_data: String = client
             .post(REPLIT_GQL_URL)
             .json(&QuickUserQuery::build_query(quick_user_query::Variables {}))
             .send()
+            .await?
+            .text()
             .await?;
-        let user_data_raw_text = user_data.text().await?;
+        // Converting to string then json so we can see what's going on if
+        // there are any json deserialisation errors eg it doesn't match up
+        // with the schema etc.
         debug!(
-            "{}:{} user_data_raw_text: {user_data_raw_text}",
+            "{}:{} Raw text quick user data: {user_data}",
             std::line!(),
             std::column!()
         );
-        let user_data: Response<quick_user_query::ResponseData> =
-            serde_json::from_str(&user_data_raw_text)?;
+        let user_data: Response<quick_user_query::ResponseData> = serde_json::from_str(&user_data)?;
         let user_data = user_data.data;
         let id = user_data.clone().and_then(|d| d.current_user).map(|u| u.id);
         let username = user_data
@@ -75,8 +102,6 @@ impl QuickUser {
             username: username.expect("a username"),
             email,
         })
-
-        // Ok(username.unwrap_or("NOT FOUND :(((".to_string()))
     }
 }
 
@@ -88,6 +113,74 @@ impl QuickUser {
 )]
 pub struct ProfileRepls;
 
+impl ProfileRepls {
+    pub async fn fetch(
+        token: &String,
+        client_opt: Option<Client>,
+    ) -> Result<Vec<profile_repls::ProfileReplsUserProfileReplsItems>, Box<dyn Error>> {
+        let client = create_client(&token, client_opt)?;
+
+        let current_user = QuickUser::fetch(&token, Some(client.clone())).await?;
+
+        let repls_query = ProfileRepls::build_query(profile_repls::Variables {
+            id: current_user.id,
+            after: None,
+        });
+
+        let repls_data: String = client
+            .post(REPLIT_GQL_URL)
+            .json(&repls_query)
+            .send()
+            .await?
+            .text()
+            .await?;
+        debug!(
+            "{}:{} Raw text repl data: {repls_data}",
+            std::line!(),
+            std::column!()
+        );
+        let repls_data_result =
+            serde_json::from_str::<Response<profile_repls::ResponseData>>(&repls_data);
+
+        if let Err(e) = repls_data_result {
+            error!("Failed to deserialize JSON: {}", e);
+            return Err(Box::new(e));
+        }
+
+        let repls = repls_data_result?
+            .data
+            .and_then(|data| data.user.map(|user| user.profile_repls.items))
+            .ok_or_else(|| "Repls not found during download")?;
+
+        Ok(repls)
+    }
+
+    pub async fn download(token: &String) -> Result<(), Box<dyn Error>> {
+        let repls = Self::fetch(token, None).await?;
+
+        fs::create_dir_all("repls").await?;
+
+        for repl in repls {
+            fs::create_dir(format!("repls/{}", repl.id)).await?;
+
+            let location = format!("repls/{}/", &repl.id);
+
+            crate::crosisdownload::download(
+                create_client_headers(),
+                create_client_cookie_jar(&token),
+                repl.id.clone(),
+                &repl.slug,
+                location.clone(),
+            )
+            .await?;
+
+            info!("Downloaded {} to {location}", repl.id)
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "src/graphql/schema 7.graphql",
@@ -95,41 +188,3 @@ pub struct ProfileRepls;
     response_derives = "Debug"
 )]
 pub struct ReplsDashboardReplFolderList;
-
-// #[tokio::main]
-// async fn main() -> Result<(), Box<dyn Error>> {
-//     let connect_sid = std::env::args().nth(1).expect("a token");
-
-//     //#region Public repls
-//     let mut profile_repls_data: Response<profile_repls::ResponseData> = client
-//         .post(REPLIT_GQL_URL)
-//         .json(&ProfileRepls::build_query(profile_repls::Variables {
-//             after: None,
-//         }))
-//         .send()
-//         .await?
-//         .json()
-//         .await?;
-
-//     if let Some(profile_repls::ResponseData {
-//         user:
-//             Some(profile_repls::ProfileReplsUser {
-//                 profile_repls: profile_repls::ProfileReplsUserProfileRepls { items, page_info },
-//             }),
-//     }) = profile_repls_data.data
-//     {
-//         std::fs::create_dir_all("repls")?;
-//         for repl in items.iter() {
-//             let url = format!("https://replit.com{}.zip", repl.url);
-//             info!("Downloading {} from {url}", repl.title);
-//             let bytes = client.get(url).send().await?.bytes().await?;
-//             debug!("{} is {} kB\n", repl.title, bytes.len() / 1_000);
-//             let mut file = std::fs::File::create(format!("repls/{}.zip", &repl.title))?;
-//             file.write_all(&bytes)?;
-//         }
-//     }
-
-//     //#endregion
-
-//     Ok(())
-// }
