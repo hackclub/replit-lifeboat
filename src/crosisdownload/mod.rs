@@ -2,7 +2,7 @@ mod metadata;
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{format_err, Result};
 use crosis::{
     goval::{self, command::Body, Command},
     Channel, Client,
@@ -11,13 +11,15 @@ use log::{debug, error, info};
 use metadata::CookieJarConnectionMetadataFetcher;
 use reqwest::{cookie::Jar, header::HeaderMap};
 
-const NO_GO: [&str; 6] = [
+// Files to ignore for history and commits
+const NO_GO: [&str; 7] = [
     "node_modules",
     ".venv",
     ".pythonlibs",
     "target",
     "vendor",
     ".upm",
+    ".cache",
 ];
 pub async fn download(
     headers: HeaderMap,
@@ -60,70 +62,118 @@ pub async fn download(
     let gcsfiles = client.open("gcsfiles".into(), None, None).await?;
     dbg!(gcsfiles.id);
 
-    let mut fres = gcsfiles
-        .request(Command {
-            body: Some(Body::Readdir(goval::File {
-                path: ".".to_string(),
-                ..Default::default()
-            })),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    dbg!(&fres);
-
-    let mut path = String::new();
     let mut files_list = vec![];
-    let mut to_check_dirs = vec![];
 
-    loop {
-        if let Some(Body::Files(files)) = fres.body {
-            for file in files.files {
-                let fpath = if path.is_empty() {
-                    file.path.clone()
-                } else {
-                    path.clone() + "/" + &file.path
-                };
+    // Scope all the temporary file stuff
+    {
+        let mut fres = gcsfiles
+            .request(Command {
+                body: Some(Body::Readdir(goval::File {
+                    path: ".".to_string(),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            })
+            .await;
+        let mut path = String::new();
+        let mut to_check_dirs = vec![];
 
-                info!("{path} {} {fpath}", file.path);
+        loop {
+            if let Some(Body::Files(files)) = fres.body {
+                for file in files.files {
+                    let fpath = if path.is_empty() {
+                        file.path.clone()
+                    } else {
+                        path.clone() + "/" + &file.path
+                    };
 
-                match goval::file::Type::from_i32(file.r#type) {
-                    Some(goval::file::Type::Directory) => to_check_dirs.push(fpath),
-                    Some(goval::file::Type::Regular) => files_list.push(fpath),
-                    _ => {
-                        error!("bruh")
+                    // Ignore no go files
+                    if NO_GO.contains(&fpath.as_str()) {
+                        continue;
+                    }
+
+                    match goval::file::Type::from_i32(file.r#type) {
+                        Some(goval::file::Type::Directory) => to_check_dirs.push(fpath),
+                        Some(goval::file::Type::Regular) => files_list.push(fpath),
+                        _ => {
+                            error!("bruh")
+                        }
                     }
                 }
             }
-        }
 
-        dbg!(&to_check_dirs);
+            if let Some(npath) = to_check_dirs.pop() {
+                path = npath;
 
-        if let Some(npath) = to_check_dirs.pop() {
-            path = npath;
-
-            fres = gcsfiles
-                .request(Command {
-                    body: Some(Body::Readdir(goval::File {
-                        path: path.clone(),
+                fres = gcsfiles
+                    .request(Command {
+                        body: Some(Body::Readdir(goval::File {
+                            path: path.clone(),
+                            ..Default::default()
+                        })),
                         ..Default::default()
-                    })),
-                    ..Default::default()
-                })
-                .await
-                .unwrap();
-            dbg!(&fres);
-        } else {
-            break;
+                    })
+                    .await;
+                dbg!(&fres);
+            } else {
+                break;
+            }
         }
     }
 
-    dbg!(files_list);
-    // dbg!(res);
+    let mut set = tokio::task::JoinSet::new();
+    for file in files_list {
+        let file_channel = client
+            .open(
+                "ot".to_string(),
+                Some(format!("ot:{file}")),
+                Some(goval::open_channel::Action::AttachOrCreate),
+            )
+            .await?;
+        set.spawn(handle_file(file_channel, file, 0));
+    }
 
-    // client.close().await?;
+    client.poke_buf().await;
+
+    while let Some(res) = set.join_next().await {
+        res??
+    }
+
+    client.destroy().await?;
 
     Ok(())
 }
 
-pub async fn handle_file(channel: Channel, filename: String, global_ts: u64) {}
+pub async fn handle_file(mut channel: Channel, filename: String, global_ts: u64) -> Result<()> {
+    let otstatus = match channel.next().await.unwrap().body {
+        Some(Body::Otstatus(otstatus)) => otstatus,
+        _ => return Err(format_err!("Invalid Otstatus")),
+    };
+
+    let version = if let Some(linked_file) = otstatus.linked_file {
+        otstatus.version
+    } else {
+        let res = channel
+            .request(Command {
+                body: Some(Body::OtLinkFile(goval::OtLinkFile {
+                    file: Some(goval::File {
+                        path: filename.clone(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            })
+            .await;
+
+        let linkfileres = match channel.next().await.unwrap().body {
+            Some(Body::OtLinkFileResponse(linkfileres)) => linkfileres,
+            _ => return Err(format_err!("Invalid OtLinkFileResponse")),
+        };
+
+        linkfileres.version
+    };
+
+    info!("{filename} is on version #{version}");
+    Ok(())
+}
