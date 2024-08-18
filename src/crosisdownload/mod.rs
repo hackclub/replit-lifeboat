@@ -31,7 +31,8 @@ pub async fn download(
     jar: Arc<Jar>,
     replid: String,
     replname: &str,
-    filepath: String,
+    main_download: String,
+    ot_download: String,
 ) -> Result<()> {
     debug!("https://replit.com/replid/{}", &replid);
 
@@ -128,8 +129,43 @@ pub async fn download(
 
     info!("Obtained file list for {replid}::{replname}");
 
+    // Sadly have to clone if want main file downloads in parallel with ot downloads
+    // Should test / benchmark if time is available.
+    let files_list2 = files_list.clone();
+    let handle = tokio::spawn(async move {
+        for path in &files_list2 {
+            let download_path = format!("{main_download}{path}");
+            let download_path = Path::new(&download_path);
+
+            if let Some(parent) = download_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            let res = gcsfiles
+                .request(Command {
+                    body: Some(Body::Read(goval::File {
+                        path: path.clone(),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })
+                .await;
+
+            let content = match res.body {
+                Some(Body::File(goval::File { content, .. })) => content,
+                _ => return Err(format_err!("Invalid File.Content: {:#?}", res.body)),
+            };
+
+            fs::write(download_path, content).await?;
+
+            info!("Downloaded {path}");
+        }
+
+        Ok(())
+    });
+
     // Chunk file fetching to not open like 500 channels at the same time
-    for chunk in files_list.chunks(MAX_FILE_PARALLELISM).map(|x| x.to_vec()) {
+    for chunk in files_list.chunks(MAX_FILE_PARALLELISM) {
         let mut set = tokio::task::JoinSet::new();
         for file in chunk {
             let file_channel = client
@@ -141,8 +177,8 @@ pub async fn download(
                 .await?;
             set.spawn(handle_file(
                 file_channel,
-                format!("{filepath}{file}"),
-                file,
+                format!("{ot_download}{file}"),
+                file.clone(),
                 0,
             ));
         }
@@ -153,6 +189,8 @@ pub async fn download(
             res??
         }
     }
+
+    handle.await??;
 
     info!("Read file history for {replid}::{replname}");
 
@@ -169,9 +207,16 @@ pub async fn handle_file(
     filename: String,
     global_ts: u64,
 ) -> Result<()> {
-    let otstatus = match channel.next().await.unwrap().body {
+    // TODO: do other stuff l8r
+    if filename.starts_with(".git") {
+        return Ok(());
+    }
+
+    let res = channel.next().await.unwrap().body;
+
+    let otstatus = match res {
         Some(Body::Otstatus(otstatus)) => otstatus,
-        _ => return Err(format_err!("Invalid Otstatus")),
+        _ => return Err(format_err!("Invalid Otstatus: {:#?}", res)),
     };
 
     let version = if otstatus.linked_file.is_some() {
@@ -198,6 +243,19 @@ pub async fn handle_file(
         linkfileres.version
     };
 
+    if version == 0 {
+        let path = Path::new(&local_filename);
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+
+        info!("{filename} has no history...");
+        fs::write(path, "[]").await?;
+
+        return Ok(());
+    }
+
     info!("{filename} is on version #{version}");
 
     let res = channel
@@ -212,7 +270,7 @@ pub async fn handle_file(
 
     let history = match res.body {
         Some(Body::OtFetchResponse(history)) => history,
-        _ => return Err(format_err!("Invalid OtFetchResponse")),
+        _ => return Err(format_err!("Invalid OtFetchResponse: {:#?}", res.body)),
     };
 
     let mut new_history = vec![];
@@ -242,11 +300,12 @@ pub async fn handle_file(
 
     fs::write(path, serde_json::to_string(&new_history)?).await?;
 
-    // debug!("Got history for {filename}: {history:#?}");
+    info!("Downloaded history for {filename}");
     Ok(())
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct OtFetchPacket {
     ops: Vec<OtOp>,
     crc32: u32,
@@ -255,6 +314,7 @@ struct OtFetchPacket {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 enum OtOp {
     Insert(String),
     Skip(u32),

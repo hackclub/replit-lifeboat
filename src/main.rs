@@ -4,6 +4,7 @@ use graphql_client::{GraphQLQuery, Response};
 use log::*;
 use reqwest::{cookie::Jar, header, Client, Url};
 use std::error::Error;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::fs;
 
 mod crosisdownload;
@@ -15,6 +16,8 @@ mod crosisdownload;
     response_derives = "Debug"
 )]
 pub struct QuickUserQuery;
+
+type DateTime = String;
 
 #[derive(GraphQLQuery)]
 #[graphql(
@@ -109,12 +112,19 @@ async fn main() -> Result<()> {
             }),
     }) = profile_repls_data.data
     {
-        fs::create_dir_all("repls").await?;
+        fs::create_dir("repls").await?;
+        fs::create_dir(format!("repls/{}", current_user.username)).await?;
 
         for repl in items {
-            fs::create_dir(format!("repls/{}", repl.id)).await?;
+            let location = format!("repls/{}/{}/", current_user.username, repl.slug);
+            let location2 = format!("repls/{}/{}.otbackup/", current_user.username, repl.slug);
 
-            let location = format!("repls/{}/", &repl.id);
+            fs::create_dir(&location).await?;
+            fs::create_dir(&location2).await?;
+
+            let ts = OffsetDateTime::parse(&repl.time_created, &Rfc3339)?;
+
+            dbg!(ts);
 
             download(
                 headers.clone(),
@@ -122,10 +132,14 @@ async fn main() -> Result<()> {
                 repl.id.clone(),
                 &repl.slug,
                 location.clone(),
+                location2.clone(),
             )
             .await?;
 
-            info!("Downloaded {} to {location}", repl.id)
+            info!(
+                "Downloaded {} to {location} with ots in {location2}",
+                repl.id
+            )
 
             // let url = format!("https://replit.com{}.zip", repl.url);
             // info!("Downloading {} from {url}", repl.title);
