@@ -1,7 +1,13 @@
 mod metadata;
 mod util;
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::Path,
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc,
+    },
+};
 
 use anyhow::{format_err, Result};
 use crosis::{
@@ -13,8 +19,14 @@ use log::{debug, error, info, warn};
 use metadata::CookieJarConnectionMetadataFetcher;
 use reqwest::{cookie::Jar, header::HeaderMap};
 use ropey::Rope;
+use serde::Serialize;
+use time::OffsetDateTime;
 // use serde::Serialize;
-use tokio::{fs, io::AsyncWriteExt};
+use tokio::{
+    fs,
+    io::AsyncWriteExt,
+    sync::{OwnedSemaphorePermit, Semaphore},
+};
 use util::{do_ot, normalize_ts, recursively_flatten_dir};
 
 // Files to ignore for history and commits
@@ -39,6 +51,11 @@ pub struct DownloadLocations {
     pub ot: String,
 }
 
+enum FilePath {
+    Cont(String),
+    Break,
+}
+
 pub async fn download(
     headers: HeaderMap,
     jar: Arc<Jar>,
@@ -61,29 +78,44 @@ pub async fn download(
     let mut chan0 = client.connect().await?;
 
     info!("Connected to {replid}::{replname}");
-
-    tokio::spawn(async move {
-        while let Ok(msg) = chan0.next().await {
-            if let Some(body) = msg.body {
-                match body {
-                    Body::Ping(_) | Body::Pong(_) => {}
-                    _ => {
-                        debug!("{body:#?}")
+    {
+        let (connected_send, connected_read) = kanal::oneshot_async();
+        let mut connected_send = Some(connected_send);
+        tokio::spawn(async move {
+            while let Ok(msg) = chan0.next().await {
+                if let Some(body) = msg.body {
+                    match body {
+                        Body::Ping(_) | Body::Pong(_) => {}
+                        Body::BootStatus(goval::BootStatus { stage, .. }) => {
+                            if goval::boot_status::Stage::from_i32(stage)
+                                == Some(goval::boot_status::Stage::Complete)
+                            {
+                                if let Some(send) = connected_send.take() {
+                                    send.send(()).await.expect("Sender is alive");
+                                }
+                            }
+                        }
+                        _ => {
+                            debug!("{body:#?}")
+                        }
                     }
                 }
             }
-        }
-    });
+        });
 
-    // I hate this but it's needed
-    tokio::time::sleep(Duration::from_secs(3)).await;
+        connected_read.recv().await?;
+    }
 
     let gcsfiles_scan = client.open("gcsfiles".into(), None, None).await?;
     info!("Obtained 1st gcsfiles for {replid}::{replname}");
 
-    tokio::spawn(async move {
-        let mut files_list = vec![];
-        let mut is_git = false;
+    let (file_list_writer, file_list_reader) = kanal::unbounded_async();
+    let (file_list_writer2, file_list_reader2) = kanal::unbounded_async();
+    let is_git = Arc::new(AtomicBool::new(false));
+
+    let is_git2 = is_git.clone();
+    let file_finder_handle = tokio::spawn(async move {
+        // let mut files_list = vec![];
 
         let mut fres = gcsfiles_scan
             .request(Command {
@@ -114,7 +146,11 @@ pub async fn download(
                     match goval::file::Type::from_i32(file.r#type) {
                         Some(goval::file::Type::Directory) => {
                             if fpath == ".git" {
-                                is_git = true;
+                                warn!(
+                                    "History -> git not currently supported for existing git repos"
+                                );
+
+                                is_git2.store(true, atomic::Ordering::Relaxed);
                             }
                             to_check_dirs.push(fpath)
                         }
@@ -137,7 +173,9 @@ pub async fn download(
                             if size > 50000000 {
                                 warn!("{fpath} is larger than max download size of 50mb");
                             } else {
-                                files_list.push(fpath);
+                                file_list_writer.send(FilePath::Cont(fpath.clone())).await?;
+
+                                file_list_writer2.send(FilePath::Cont(fpath)).await?;
                             }
                         }
                         _ => {
@@ -165,19 +203,20 @@ pub async fn download(
             }
         }
 
-        Ok(())
+        file_list_writer.send(FilePath::Break).await?;
+
+        // info!("Obtained file list for {replid}::{replname}");
+
+        Ok(file_list_writer)
     });
 
-    info!("Obtained file list for {replid}::{replname}");
-
     let gcsfiles_download = client.open("gcsfiles".into(), None, None).await?;
-    info!("Obtained 1st gcsfiles for {replid}::{replname}");
+    info!("Obtained 2nd gcsfiles for {replid}::{replname}");
     // Sadly have to clone if want main file downloads in parallel with ot downloads
     // Should test / benchmark if time is available.
-    let files_list2 = files_list.clone();
     let main_download = download_locations.main.clone();
     let handle = tokio::spawn(async move {
-        for path in &files_list2 {
+        while let Ok(FilePath::Cont(path)) = file_list_reader2.recv().await {
             let download_path = format!("{main_download}{path}");
             let download_path = Path::new(&download_path);
 
@@ -208,51 +247,55 @@ pub async fn download(
         Ok(())
     });
 
-    if is_git {
-        warn!("History -> git not currently supported for existing git repos")
-    }
+    // if is_git {
+    //     warn!("History -> git not currently supported for existing git repos")
+    // }
 
-    let staging_loc = if is_git {
-        None
-    } else {
-        Some(download_locations.staging_git.clone())
-    };
+    let semaphore = Arc::new(Semaphore::new(MAX_FILE_PARALLELISM));
+    let mut set = tokio::task::JoinSet::new();
 
-    // Chunk file fetching to not open like 500 channels at the same time
-    for chunk in files_list.chunks(MAX_FILE_PARALLELISM) {
-        let mut set = tokio::task::JoinSet::new();
-        for file in chunk {
-            let file_channel = client
-                .open(
-                    "ot".to_string(),
-                    Some(format!("ot:{file}")),
-                    Some(goval::open_channel::Action::AttachOrCreate),
-                )
-                .await?;
+    while let Ok(FilePath::Cont(file)) = file_list_reader.recv().await {
+        let permit = semaphore.clone().acquire_owned().await?;
 
-            set.spawn(handle_file(
-                file_channel,
-                format!("{}{file}", download_locations.ot),
-                staging_loc.clone(),
-                file.clone(),
-                ts_offset,
-            ));
-        }
+        let file_channel = client
+            .open(
+                "ot".to_string(),
+                Some(format!("ot:{file}")),
+                Some(goval::open_channel::Action::AttachOrCreate),
+            )
+            .await?;
 
+        set.spawn(handle_file(
+            file_channel,
+            format!("{}{file}", download_locations.ot),
+            download_locations.staging_git.clone(),
+            file.clone(),
+            ts_offset,
+            permit,
+            is_git.clone(),
+        ));
+
+        // Poke 👉
         client.poke_buf().await;
-
-        while let Some(res) = set.join_next().await {
-            res??
-        }
     }
+
+    // Poke 👉
+    client.poke_buf().await;
+
+    while let Some(res) = set.join_next().await {
+        res??
+    }
+
+    let writer = file_finder_handle.await??;
 
     info!("Read file history for {replid}::{replname}");
 
     handle.await??;
 
     info!("Downloaded final file contents for {replid}::{replname}");
+    writer.close();
 
-    if staging_loc.is_some() {
+    if !is_git.load(atomic::Ordering::Relaxed) {
         build_git(
             download_locations.staging_git,
             download_locations.git,
@@ -261,6 +304,9 @@ pub async fn download(
         .await?;
 
         info!("Built git repo from history snapshots for {replid}::{replname}");
+    } else {
+        fs::remove_dir_all(download_locations.staging_git).await?;
+        fs::remove_dir_all(download_locations.git).await?;
     }
 
     // let repo = tokio::task::spawn_blocking(move || {
@@ -283,9 +329,11 @@ pub async fn download(
 pub async fn handle_file(
     mut channel: Channel,
     local_filename: String,
-    staging_dir: Option<String>,
+    staging_dir: String,
     filename: String,
     global_ts: i64,
+    permit: OwnedSemaphorePermit,
+    is_git: Arc<AtomicBool>,
 ) -> Result<()> {
     // TODO: do other stuff l8r
     if filename.starts_with(".git") {
@@ -354,121 +402,122 @@ pub async fn handle_file(
     };
 
     // GIT STUFF!
-    if let Some(staging) = staging_dir {
-        if !history.packets.is_empty() {
-            let mut contents = Rope::new();
+    if is_git.load(atomic::Ordering::Relaxed) && !history.packets.is_empty() {
+        let mut contents = Rope::new();
 
-            let mut timestamp = normalize_ts(
-                history
-                    .packets
-                    .first()
-                    .expect("Has to exist")
-                    .committed
-                    .as_ref()
-                    .map(|ts| ts.seconds)
-                    .unwrap_or(0),
+        let mut timestamp = normalize_ts(
+            history
+                .packets
+                .first()
+                .expect("Has to exist")
+                .committed
+                .as_ref()
+                .map(|ts| ts.seconds)
+                .unwrap_or(0),
+            global_ts,
+        );
+
+        for packet in &history.packets {
+            let new_ts = normalize_ts(
+                packet.committed.as_ref().map(|ts| ts.seconds).unwrap_or(0),
                 global_ts,
             );
 
-            for packet in &history.packets {
-                let new_ts = normalize_ts(
-                    packet.committed.as_ref().map(|ts| ts.seconds).unwrap_or(0),
-                    global_ts,
-                );
+            if new_ts != timestamp {
+                let staging_ts_path = format!("{staging_dir}{timestamp}/{filename}");
+                let path = Path::new(&staging_ts_path);
 
-                if new_ts != timestamp {
-                    let staging_ts_path = format!("{staging}{timestamp}/{filename}");
-                    let path = Path::new(&staging_ts_path);
-
-                    if let Some(parent) = path.parent() {
-                        fs::create_dir_all(parent).await?;
-                    }
-
-                    let mut file_writer = fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(true)
-                        .open(path)
-                        .await?;
-
-                    for chunk in contents.chunks() {
-                        let bytes = chunk.as_bytes();
-
-                        file_writer.write_all(bytes).await?;
-                    }
-
-                    file_writer.flush().await?;
-                    file_writer.sync_data().await?;
-
-                    drop(file_writer);
-
-                    timestamp = new_ts;
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).await?;
                 }
 
-                do_ot(&mut contents, packet)?;
+                let mut file_writer = fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(path)
+                    .await?;
+
+                for chunk in contents.chunks() {
+                    let bytes = chunk.as_bytes();
+
+                    file_writer.write_all(bytes).await?;
+                }
+
+                file_writer.flush().await?;
+                file_writer.sync_data().await?;
+
+                drop(file_writer);
+
+                timestamp = new_ts;
             }
 
-            let staging_ts_path_final = format!("{staging}{timestamp}/{filename}");
-            let path = Path::new(&staging_ts_path_final);
-
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).await?;
-            }
-
-            let mut file_writer = fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&path)
-                .await?;
-
-            for chunk in contents.chunks() {
-                let bytes = chunk.as_bytes();
-
-                file_writer.write_all(bytes).await?;
-            }
-
-            file_writer.flush().await?;
-            file_writer.sync_data().await?;
-
-            drop(file_writer);
+            do_ot(&mut contents, packet)?;
         }
+
+        let staging_ts_path_final = format!("{staging_dir}{timestamp}/{filename}");
+        let path = Path::new(&staging_ts_path_final);
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+
+        let mut file_writer = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .await?;
+
+        for chunk in contents.chunks() {
+            let bytes = chunk.as_bytes();
+
+            file_writer.write_all(bytes).await?;
+        }
+
+        file_writer.flush().await?;
+        file_writer.sync_data().await?;
+
+        drop(file_writer);
     }
 
-    // let mut new_history = vec![];
+    let mut new_history = vec![];
 
-    // for item in history.packets {
-    //     let mut ops = vec![];
-    //     for op in item.op {
-    //         ops.push(match op.op_component.unwrap() {
-    //             goval::ot_op_component::OpComponent::Skip(amount) => OtOp::Skip(amount),
-    //             goval::ot_op_component::OpComponent::Delete(amount) => OtOp::Delete(amount),
-    //             goval::ot_op_component::OpComponent::Insert(text) => OtOp::Insert(text),
-    //         })
-    //     }
+    for item in history.packets {
+        let mut ops = vec![];
+        for op in item.op {
+            ops.push(match op.op_component.unwrap() {
+                goval::ot_op_component::OpComponent::Skip(amount) => OtOp::Skip(amount),
+                goval::ot_op_component::OpComponent::Delete(amount) => OtOp::Delete(amount),
+                goval::ot_op_component::OpComponent::Insert(text) => OtOp::Insert(text),
+            })
+        }
 
-    //     let timestamp = item.committed.map(|ts| ts.seconds).unwrap_or(0);
-    //     new_history.push(OtFetchPacket {
-    //         ops,
-    //         crc32: item.crc32,
-    //         timestamp,
-    //         ts_string: format!(
-    //             "{}",
-    //             OffsetDateTime::from_unix_timestamp(normalize_ts(timestamp, global_ts))?
-    //         ),
-    //         version: item.version,
-    //     })
-    // }
+        let timestamp = item.committed.map(|ts| ts.seconds).unwrap_or(0);
+        new_history.push(OtFetchPacket {
+            ops,
+            crc32: item.crc32,
+            timestamp,
+            ts_string: format!(
+                "{}",
+                OffsetDateTime::from_unix_timestamp(normalize_ts(timestamp, global_ts))?
+            ),
+            version: item.version,
+        })
+    }
 
-    // let path = Path::new(&local_filename);
+    let path = Path::new(&local_filename);
 
-    // if let Some(parent) = path.parent() {
-    //     fs::create_dir_all(parent).await?;
-    // }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
 
-    // fs::write(path, serde_json::to_string(&new_history)?).await?;
+    fs::write(path, serde_json::to_string(&new_history)?).await?;
 
     info!("Downloaded history for {filename}");
+
+    drop(permit);
+
     Ok(())
 }
 
@@ -566,20 +615,20 @@ pub async fn build_git(staging_dir: String, git_dir: String, global_ts: i64) -> 
     Ok(())
 }
 
-// #[derive(Serialize)]
-// #[serde(rename_all = "camelCase")]
-// struct OtFetchPacket {
-//     ops: Vec<OtOp>,
-//     crc32: u32,
-//     timestamp: i64,
-//     ts_string: String,
-//     version: u32,
-// }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OtFetchPacket {
+    ops: Vec<OtOp>,
+    crc32: u32,
+    timestamp: i64,
+    ts_string: String,
+    version: u32,
+}
 
-// #[derive(Serialize)]
-// #[serde(rename_all = "camelCase")]
-// enum OtOp {
-//     Insert(String),
-//     Skip(u32),
-//     Delete(u32),
-// }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+enum OtOp {
+    Insert(String),
+    Skip(u32),
+    Delete(u32),
+}
