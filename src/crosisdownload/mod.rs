@@ -19,7 +19,7 @@ use tokio::{fs, io::AsyncWriteExt};
 use util::{do_ot, normalize_ts, recursively_flatten_dir};
 
 // Files to ignore for history and commits
-static NO_GO: [&str; 8] = [
+static NO_GO: [&str; 10] = [
     "node_modules",
     ".venv",
     ".pythonlibs",
@@ -28,6 +28,8 @@ static NO_GO: [&str; 8] = [
     ".upm",
     ".cache",
     ".config",
+    "zig-cache",
+    "zig-out",
 ];
 const MAX_FILE_PARALLELISM: usize = 20;
 

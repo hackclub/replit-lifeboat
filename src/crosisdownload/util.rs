@@ -2,7 +2,6 @@ use anyhow::{format_err, Result};
 use crc32fast::Hasher;
 use crosis::goval::{self, OtPacket};
 use ropey::Rope;
-use std::path::Path;
 use tokio::fs;
 
 const STEP_SIZE: i64 = 60 * 60;
@@ -45,6 +44,8 @@ pub fn do_ot(contents: &mut Rope, ot: &OtPacket) -> Result<()> {
             }
             goval::ot_op_component::OpComponent::Insert(insert) => {
                 contents.insert(cursor, insert);
+
+                cursor += insert.len();
             }
         }
     }
