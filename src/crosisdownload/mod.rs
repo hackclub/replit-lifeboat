@@ -80,7 +80,7 @@ pub async fn download(
                 })),
                 ..Default::default()
             })
-            .await;
+            .await?;
         let mut path = String::new();
         let mut to_check_dirs = vec![];
 
@@ -119,7 +119,7 @@ pub async fn download(
                         })),
                         ..Default::default()
                     })
-                    .await;
+                    .await?;
                 debug!("Obtained file tree for path `{path}`: {:#?}", fres);
             } else {
                 break;
@@ -149,7 +149,7 @@ pub async fn download(
                     })),
                     ..Default::default()
                 })
-                .await;
+                .await?;
 
             let content = match res.body {
                 Some(Body::File(goval::File { content, .. })) => content,
@@ -205,7 +205,7 @@ pub async fn handle_file(
     mut channel: Channel,
     local_filename: String,
     filename: String,
-    global_ts: u64,
+    _global_ts: u64,
 ) -> Result<()> {
     // TODO: do other stuff l8r
     if filename.starts_with(".git") {
@@ -233,7 +233,7 @@ pub async fn handle_file(
                 })),
                 ..Default::default()
             })
-            .await;
+            .await?;
 
         let linkfileres = match res.body {
             Some(Body::OtLinkFileResponse(linkfileres)) => linkfileres,
@@ -266,7 +266,7 @@ pub async fn handle_file(
             })),
             ..Default::default()
         })
-        .await;
+        .await?;
 
     let history = match res.body {
         Some(Body::OtFetchResponse(history)) => history,

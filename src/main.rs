@@ -3,7 +3,6 @@ use crosisdownload::download;
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
 use reqwest::{cookie::Jar, header, Client, Url};
-use std::error::Error;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::fs;
 
@@ -80,12 +79,12 @@ async fn main() -> Result<()> {
 
     info!("Username: {:?}", current_user.username);
 
-    let repls_query =
-        ReplsDashboardReplFolderList::build_query(repls_dashboard_repl_folder_list::Variables {
-            path: "".to_string(),
-            starred: None,
-            after: None,
-        });
+    // let repls_query =
+    //     ReplsDashboardReplFolderList::build_query(repls_dashboard_repl_folder_list::Variables {
+    //         path: "".to_string(),
+    //         starred: None,
+    //         after: None,
+    //     });
 
     // let repl_folder_data: Response<repls_dashboard_repl_folder_list::ResponseData> = client
     //     .post(REPLIT_GQL_URL)
@@ -94,7 +93,7 @@ async fn main() -> Result<()> {
     //     .json()?;
 
     //#region Public repls
-    let mut profile_repls_data: Response<profile_repls::ResponseData> = client
+    let profile_repls_data: Response<profile_repls::ResponseData> = client
         .post(REPLIT_GQL_URL)
         .json(&ProfileRepls::build_query(profile_repls::Variables {
             after: None,
@@ -108,7 +107,11 @@ async fn main() -> Result<()> {
     if let Some(profile_repls::ResponseData {
         user:
             Some(profile_repls::ProfileReplsUser {
-                profile_repls: profile_repls::ProfileReplsUserProfileRepls { items, page_info },
+                profile_repls:
+                    profile_repls::ProfileReplsUserProfileRepls {
+                        items,
+                        page_info: _,
+                    },
             }),
     }) = profile_repls_data.data
     {
