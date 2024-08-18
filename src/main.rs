@@ -93,6 +93,9 @@ async fn main() -> Result<()> {
     //     .json()?;
 
     //#region Public repls
+    fs::create_dir("repls").await?;
+    fs::create_dir(format!("repls/{}", current_user.username)).await?;
+
     let mut after = None;
     loop {
         let profile_repls_data: Response<profile_repls::ResponseData> = client
@@ -113,9 +116,6 @@ async fn main() -> Result<()> {
                 }),
         }) = profile_repls_data.data
         {
-            fs::create_dir("repls").await?;
-            fs::create_dir(format!("repls/{}", current_user.username)).await?;
-
             for repl in items {
                 // #[allow(deprecated)]
                 // let repl = ProfileReplsUserProfileReplsItems {
@@ -140,13 +140,13 @@ async fn main() -> Result<()> {
                 let git_location = format!("repls/{}/{}.git/", current_user.username, repl.slug);
                 let staging_git_location =
                     format!("repls/{}/{}.gitstaging/", current_user.username, repl.slug);
-                let ot_location =
-                    format!("repls/{}/{}.otbackup/", current_user.username, repl.slug);
+                // let ot_location =
+                //     format!("repls/{}/{}.otbackup/", current_user.username, repl.slug);
 
                 fs::create_dir(&main_location).await?;
                 fs::create_dir(&git_location).await?;
                 fs::create_dir(&staging_git_location).await?;
-                fs::create_dir(&ot_location).await?;
+                // fs::create_dir(&ot_location).await?;
 
                 let ts = OffsetDateTime::parse(&repl.time_created, &Rfc3339)?;
 
@@ -161,16 +161,13 @@ async fn main() -> Result<()> {
                         main: main_location.clone(),
                         git: git_location.clone(),
                         staging_git: staging_git_location.clone(),
-                        ot: ot_location.clone(),
+                        ot: String::from("repl/thisdoesntexist"), //ot_location.clone(),
                     },
                     ts.unix_timestamp(),
                 )
                 .await?;
 
-                info!(
-                "Downloaded {} to {main_location} with git (if not already existant) in {git_location} and ots in {ot_location}",
-                repl.id
-            );
+                info!("Downloaded {}::{}", repl.id, repl.slug);
 
                 // let url = format!("https://replit.com{}.zip", repl.url);
                 // info!("Downloading {} from {url}", repl.title);

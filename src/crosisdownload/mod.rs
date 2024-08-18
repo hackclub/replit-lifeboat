@@ -5,7 +5,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::{format_err, Result};
 use crosis::{
-    goval::{self, command::Body, Command},
+    goval::{self, command::Body, Command, StatResult},
     Channel, Client,
 };
 use git2::{Repository, Signature, Time};
@@ -13,8 +13,7 @@ use log::{debug, error, info, warn};
 use metadata::CookieJarConnectionMetadataFetcher;
 use reqwest::{cookie::Jar, header::HeaderMap};
 use ropey::Rope;
-use serde::Serialize;
-use time::OffsetDateTime;
+// use serde::Serialize;
 use tokio::{fs, io::AsyncWriteExt};
 use util::{do_ot, normalize_ts, recursively_flatten_dir};
 
@@ -79,15 +78,14 @@ pub async fn download(
     // I hate this but it's needed
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    let gcsfiles = client.open("gcsfiles".into(), None, None).await?;
-    info!("Obtained gcsfiles for {replid}::{replname}");
+    let gcsfiles_scan = client.open("gcsfiles".into(), None, None).await?;
+    info!("Obtained 1st gcsfiles for {replid}::{replname}");
 
-    let mut files_list = vec![];
-    let mut is_git = false;
+    tokio::spawn(async move {
+        let mut files_list = vec![];
+        let mut is_git = false;
 
-    // Scope all the temporary file stuff
-    {
-        let mut fres = gcsfiles
+        let mut fres = gcsfiles_scan
             .request(Command {
                 body: Some(Body::Readdir(goval::File {
                     path: ".".to_string(),
@@ -120,7 +118,28 @@ pub async fn download(
                             }
                             to_check_dirs.push(fpath)
                         }
-                        Some(goval::file::Type::Regular) => files_list.push(fpath),
+                        Some(goval::file::Type::Regular) => {
+                            let res = gcsfiles_scan
+                                .request(Command {
+                                    body: Some(Body::Stat(goval::File {
+                                        path: fpath.clone(),
+                                        ..Default::default()
+                                    })),
+                                    ..Default::default()
+                                })
+                                .await?;
+
+                            let size = match res.body {
+                                Some(Body::StatRes(StatResult { size, .. })) => size,
+                                _ => return Err(format_err!("Invalid StatRes: {:#?}", res.body)),
+                            };
+
+                            if size > 50000000 {
+                                warn!("{fpath} is larger than max download size of 50mb");
+                            } else {
+                                files_list.push(fpath);
+                            }
+                        }
                         _ => {
                             error!("bruh")
                         }
@@ -131,7 +150,7 @@ pub async fn download(
             if let Some(npath) = to_check_dirs.pop() {
                 path = npath;
 
-                fres = gcsfiles
+                fres = gcsfiles_scan
                     .request(Command {
                         body: Some(Body::Readdir(goval::File {
                             path: path.clone(),
@@ -145,10 +164,14 @@ pub async fn download(
                 break;
             }
         }
-    }
+
+        Ok(())
+    });
 
     info!("Obtained file list for {replid}::{replname}");
 
+    let gcsfiles_download = client.open("gcsfiles".into(), None, None).await?;
+    info!("Obtained 1st gcsfiles for {replid}::{replname}");
     // Sadly have to clone if want main file downloads in parallel with ot downloads
     // Should test / benchmark if time is available.
     let files_list2 = files_list.clone();
@@ -162,7 +185,7 @@ pub async fn download(
                 fs::create_dir_all(parent).await?;
             }
 
-            let res = gcsfiles
+            let res = gcsfiles_download
                 .request(Command {
                     body: Some(Body::Read(goval::File {
                         path: path.clone(),
@@ -412,38 +435,38 @@ pub async fn handle_file(
         }
     }
 
-    let mut new_history = vec![];
+    // let mut new_history = vec![];
 
-    for item in history.packets {
-        let mut ops = vec![];
-        for op in item.op {
-            ops.push(match op.op_component.unwrap() {
-                goval::ot_op_component::OpComponent::Skip(amount) => OtOp::Skip(amount),
-                goval::ot_op_component::OpComponent::Delete(amount) => OtOp::Delete(amount),
-                goval::ot_op_component::OpComponent::Insert(text) => OtOp::Insert(text),
-            })
-        }
+    // for item in history.packets {
+    //     let mut ops = vec![];
+    //     for op in item.op {
+    //         ops.push(match op.op_component.unwrap() {
+    //             goval::ot_op_component::OpComponent::Skip(amount) => OtOp::Skip(amount),
+    //             goval::ot_op_component::OpComponent::Delete(amount) => OtOp::Delete(amount),
+    //             goval::ot_op_component::OpComponent::Insert(text) => OtOp::Insert(text),
+    //         })
+    //     }
 
-        let timestamp = item.committed.map(|ts| ts.seconds).unwrap_or(0);
-        new_history.push(OtFetchPacket {
-            ops,
-            crc32: item.crc32,
-            timestamp,
-            ts_string: format!(
-                "{}",
-                OffsetDateTime::from_unix_timestamp(normalize_ts(timestamp, global_ts))?
-            ),
-            version: item.version,
-        })
-    }
+    //     let timestamp = item.committed.map(|ts| ts.seconds).unwrap_or(0);
+    //     new_history.push(OtFetchPacket {
+    //         ops,
+    //         crc32: item.crc32,
+    //         timestamp,
+    //         ts_string: format!(
+    //             "{}",
+    //             OffsetDateTime::from_unix_timestamp(normalize_ts(timestamp, global_ts))?
+    //         ),
+    //         version: item.version,
+    //     })
+    // }
 
-    let path = Path::new(&local_filename);
+    // let path = Path::new(&local_filename);
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
+    // if let Some(parent) = path.parent() {
+    //     fs::create_dir_all(parent).await?;
+    // }
 
-    fs::write(path, serde_json::to_string(&new_history)?).await?;
+    // fs::write(path, serde_json::to_string(&new_history)?).await?;
 
     info!("Downloaded history for {filename}");
     Ok(())
@@ -538,23 +561,25 @@ pub async fn build_git(staging_dir: String, git_dir: String, global_ts: i64) -> 
         .await??;
     }
 
+    fs::remove_dir_all(&staging_dir).await?;
+
     Ok(())
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OtFetchPacket {
-    ops: Vec<OtOp>,
-    crc32: u32,
-    timestamp: i64,
-    ts_string: String,
-    version: u32,
-}
+// #[derive(Serialize)]
+// #[serde(rename_all = "camelCase")]
+// struct OtFetchPacket {
+//     ops: Vec<OtOp>,
+//     crc32: u32,
+//     timestamp: i64,
+//     ts_string: String,
+//     version: u32,
+// }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-enum OtOp {
-    Insert(String),
-    Skip(u32),
-    Delete(u32),
-}
+// #[derive(Serialize)]
+// #[serde(rename_all = "camelCase")]
+// enum OtOp {
+//     Insert(String),
+//     Skip(u32),
+//     Delete(u32),
+// }
