@@ -111,6 +111,7 @@ impl QuickUser {
     }
 }
 
+type DateTime = String;
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "src/graphql/schema 7.graphql",
