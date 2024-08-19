@@ -2,10 +2,9 @@ use airtable_api::{Airtable, Record};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
-static AIRTABLE: Lazy<Airtable> = Lazy::new(|| Airtable::new_from_env());
+static AIRTABLE: Lazy<Airtable> = Lazy::new(Airtable::new_from_env);
 static TABLE: &str = "tblZABr7qbdjjZo1G";
 
-enum Status {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirtableSyncedUser {
     #[serde(rename = "ID")]
@@ -14,11 +13,20 @@ pub struct AirtableSyncedUser {
     #[serde(rename = "Username")]
     pub username: String,
 
+    #[serde(rename = "Connection Token")]
+    pub token: String,
+
     #[serde(rename = "Email")]
     pub email: String,
 
     #[serde(rename = "Status")]
     pub status: ProcessState,
+
+    #[serde(rename = "R2 Link")]
+    pub r2_link: String,
+
+    #[serde(rename = "Failed Repl IDs")]
+    pub failed_ids: String,
 }
 
 pub async fn add_user(user: AirtableSyncedUser) -> bool {
@@ -68,6 +76,8 @@ pub enum ProcessState {
     R2LinkEmailSent,
     #[serde(rename = "Downloaded repls")]
     DownloadedRepls,
+    #[serde(rename = "Errored")]
+    Errored,
 }
 
 impl fmt::Display for ProcessState {
@@ -80,6 +90,7 @@ impl fmt::Display for ProcessState {
             ProcessState::WaitingInR2 => "Waiting in R2",
             ProcessState::R2LinkEmailSent => "R2 link email sent",
             ProcessState::DownloadedRepls => "Downloaded repls",
+            ProcessState::Errored => "Errored",
         };
         write!(f, "{}", value)
     }

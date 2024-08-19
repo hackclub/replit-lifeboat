@@ -51,6 +51,8 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
         username: at_user.username,
         email: email.clone(),
         status: airtable::ProcessState::Registered,
+        r2_link: String::new(),
+        failed_ids: String::new(),
     })
     .await
     {
