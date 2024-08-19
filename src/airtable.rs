@@ -93,6 +93,9 @@ pub enum ProcessState {
     DownloadedRepls,
     #[serde(rename = "Errored")]
     Errored,
+    // Errored the entire download function
+    #[serde(rename = "ErroredMain")]
+    ErroredMain,
 }
 
 impl fmt::Display for ProcessState {
@@ -106,6 +109,7 @@ impl fmt::Display for ProcessState {
             ProcessState::R2LinkEmailSent => "R2 link email sent",
             ProcessState::DownloadedRepls => "Downloaded repls",
             ProcessState::Errored => "Errored",
+            ProcessState::ErroredMain => "ErroredMain",
         };
         write!(f, "{}", value)
     }

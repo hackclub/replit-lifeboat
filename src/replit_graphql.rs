@@ -6,7 +6,6 @@ use reqwest::{
     header::{self, HeaderMap},
     Client, Url,
 };
-use rocket::futures::FutureExt;
 use std::sync::Arc;
 use std::{error::Error, time::Duration};
 use time::OffsetDateTime;
@@ -141,7 +140,7 @@ impl ProfileRepls {
             Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
             Option<String>,
         ),
-        Box<dyn Error>,
+        Box<dyn Error + Sync + Send>,
     > {
         let client = create_client(token, client_opt)?;
 
@@ -189,7 +188,7 @@ impl ProfileRepls {
     pub async fn download(
         token: &String,
         mut synced_user: Record<AirtableSyncedUser>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error + Sync + Send>> {
         synced_user.fields.status = ProcessState::CollectingRepls;
         airtable::update_records(vec![synced_user.clone()]).await?;
 

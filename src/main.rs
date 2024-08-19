@@ -1,15 +1,10 @@
 use anyhow::Result;
-use chrono::Utc;
-use log::{error, info};
 use replit_takeout::{
     airtable::{self, ProcessState},
     email::send_email,
     replit_graphql::{ProfileRepls, QuickUser},
 };
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde_json::json;
-use std::{env, time::Duration};
-use tokio;
+use std::time::Duration;
 
 #[macro_use]
 extern crate rocket;
@@ -19,6 +14,13 @@ mod crosisdownload;
 #[launch]
 async fn rocket() -> _ {
     env_logger::init();
+
+    tokio::spawn(async {
+        if let Err(err) = airtable_loop().await {
+            error!("Airtable internal loop error, OH NO: {err}")
+        }
+    });
+
     dotenv::dotenv().ok();
     rocket::build().mount("/", routes![hello, signup])
 }
@@ -77,7 +79,7 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
 
 async fn airtable_loop() -> Result<()> {
     loop {
-        let user;
+        let mut user;
         'mainloop: loop {
             let records = airtable::get_records().await?;
             for record in records {
@@ -90,8 +92,17 @@ async fn airtable_loop() -> Result<()> {
         }
 
         if let Err(err) = ProfileRepls::download(&user.fields.token, user.clone()).await {
-            error!("Error with `{}`'s download: {err:#?}", user.fields.username)
-            // FIXME: change state of user here....
+            error!("Error with `{}`'s download: {err:#?}", user.fields.username);
+
+            user.fields.status = ProcessState::ErroredMain;
+            // user.fields.failed_ids = errored.join(",");
+
+            send_email(
+                &user.fields.email,
+                "Your Replit⠕ export is slightly delayed :/".into(),
+                format!("Hey {}, We have run into an issue processing your Replit⠕ takeout 🥡.\nWe will manually review and confirm that all your data is included. If you don't hear back again within a few days email malted@hackclub.com. Sorry for the inconvenience.", user.fields.username),
+            )
+            .await;
         }
     }
 }
