@@ -58,6 +58,10 @@ pub async fn get_records() {
     }
 }
 
+pub async fn update_records(records: Vec<Record<AirtableSyncedUser>>) {
+    AIRTABLE.update_records(TABLE, records).await.unwrap();
+}
+
 use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
