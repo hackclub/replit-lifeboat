@@ -18,6 +18,7 @@ use crate::{
     airtable::{self, AirtableSyncedUser, ProcessState},
     crosisdownload::make_zip,
     email::send_email,
+    r2,
 };
 
 static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
@@ -311,7 +312,23 @@ impl ProfileRepls {
             synced_user.fields.status = ProcessState::WaitingInR2;
         }
 
-        // synced_user.fields.r2_link = ...; // FIXME: upload to r2
+        let zip_path = format!("repls/{}.zip", current_user.username);
+
+        r2::upload(
+            format!("export/{}.zip", current_user.username),
+            &fs::read(&zip_path).await?,
+        )
+        .await?;
+
+        fs::remove_file(&zip_path).await?;
+
+        let link = r2::get(
+            format!("export/{}.zip", current_user.username),
+            format!("{}.zip", current_user.username),
+        )
+        .await?;
+
+        synced_user.fields.r2_link = link.clone();
 
         airtable::update_records(vec![synced_user.clone()]).await?;
 
@@ -319,7 +336,7 @@ impl ProfileRepls {
             send_email(
                 &synced_user.fields.email,
                 "Your Replit⠕ export is ready!".into(),
-                format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 30 days.", synced_user.fields.username, ""), // FIXME: put in r2 link
+                format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 30 days.", synced_user.fields.username, link),
             )
             .await;
             synced_user.fields.status = ProcessState::R2LinkEmailSent;
