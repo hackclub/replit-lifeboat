@@ -206,10 +206,6 @@ async fn main() -> Result<()> {
                     "Download stats: {j} correctly downloaded out of {i} total attempted downloads"
                 );
 
-                if i == 2 {
-                    break;
-                }
-
                 // let url = format!("https://replit.com{}.zip", repl.url);
                 // info!("Downloading {} from {url}", repl.title);
                 // let bytes = client.get(url).send().await?.bytes().await?;
