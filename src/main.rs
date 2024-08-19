@@ -27,7 +27,7 @@ async fn rocket() -> _ {
 
 #[get("/")]
 fn hello() -> &'static str {
-    "Hello, world!"
+    "I haven't slept in days; please don't break this - malted"
 }
 
 #[post("/signup?<token>&<custom_email>")]

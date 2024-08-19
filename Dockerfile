@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     lsb-release \
     sudo \
+    libssl-dev \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 

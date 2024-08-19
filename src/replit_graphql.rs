@@ -335,7 +335,7 @@ impl ProfileRepls {
             send_email(
                 &synced_user.fields.email,
                 "Your Replit⠕ export is ready!".into(),
-                format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 7 days.", synced_user.fields.username, link),
+                format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 24 hours.", synced_user.fields.username, link),
             )
             .await;
             synced_user.fields.status = ProcessState::R2LinkEmailSent;

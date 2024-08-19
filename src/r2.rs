@@ -50,8 +50,8 @@ pub async fn get(r2_path: String, custom_filename: String) -> Result<String, S3E
         format!("attachment; filename=\"{custom_filename}\""),
     );
 
-    // Valid for a week (in seconds) (60 * 60 * 24 * 7)
+    // Valid for 24 hours
     BUCKET
-        .presign_get(r2_path, 604_800, Some(custom_queries))
+        .presign_get(r2_path, 86400, Some(custom_queries))
         .await
 }
