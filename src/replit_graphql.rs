@@ -12,6 +12,8 @@ use tokio::fs;
 
 use serde::Deserialize;
 
+use crate::crosisdownload::make_zip;
+
 static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
 
 fn create_client_headers() -> HeaderMap {
@@ -262,6 +264,15 @@ impl ProfileRepls {
                 break;
             }
         }
+
+        let path = format!("repls/{}", current_user.username);
+        make_zip(path.clone(), format!("repls/{}.zip", current_user.username)).await?;
+        fs::remove_dir_all(&path).await?;
+
+        warn!(
+            "User repls have been zipped into repls/{}.zip",
+            current_user.username
+        );
 
         Ok(())
     }

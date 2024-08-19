@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
-use replit_takeout::crosisdownload::{download, DownloadLocations};
+use replit_takeout::crosisdownload::{download, make_zip, DownloadLocations};
 use reqwest::{cookie::Jar, header, Client, Url};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::fs;
@@ -204,7 +204,11 @@ async fn main() -> Result<()> {
 
                 warn!(
                     "Download stats: {j} correctly downloaded out of {i} total attempted downloads"
-                )
+                );
+
+                if i == 2 {
+                    break;
+                }
 
                 // let url = format!("https://replit.com{}.zip", repl.url);
                 // info!("Downloading {} from {url}", repl.title);
@@ -226,6 +230,11 @@ async fn main() -> Result<()> {
             break;
         }
     }
+
+    // println!("")
+    let path = format!("repls/{}", current_user.username);
+    make_zip(path.clone(), format!("repls/{}.zip", current_user.username)).await?;
+    fs::remove_dir_all(&path).await?;
 
     //#endregion
 

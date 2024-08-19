@@ -1,4 +1,5 @@
 use anyhow::{format_err, Result};
+use async_zip::{base::write::ZipFileWriter, ZipEntryBuilder};
 use crc32fast::Hasher;
 use crosis::goval::{self, OtPacket};
 use ropey::Rope;
@@ -110,4 +111,26 @@ pub async fn recursively_flatten_dir(dir: String) -> Result<Vec<String>> {
     }
 
     Ok(files_list)
+}
+
+pub async fn make_zip(dir: String, zip_path: String) -> Result<()> {
+    let mut file = fs::File::create(zip_path).await?;
+    let mut writer = ZipFileWriter::with_tokio(&mut file);
+
+    let files = recursively_flatten_dir(dir.clone()).await?;
+
+    let file_prefix = dir + "/";
+
+    for file in files {
+        let data = fs::read(&file).await?;
+        let builder = ZipEntryBuilder::new(
+            file.strip_prefix(&file_prefix).unwrap_or(&file).into(),
+            async_zip::Compression::Deflate,
+        );
+
+        writer.write_entry_whole(builder, &data).await?;
+    }
+    writer.close().await?;
+
+    Ok(())
 }

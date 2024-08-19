@@ -1,6 +1,8 @@
 mod metadata;
 mod util;
 
+pub use util::make_zip;
+
 use std::{path::Path, sync::Arc};
 
 use anyhow::{format_err, Result};
