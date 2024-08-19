@@ -41,3 +41,10 @@ pub async fn upload(file_path: String, contents: &[u8]) -> Result<(), S3Error> {
     // assert_eq!(response_data.status_code(), 204);
     Ok(())
 }
+
+pub async fn get(r2_path: String) -> Result<(), S3Error> {
+    let response_data = BUCKET.get_object(r2_path).await?;
+    println!("{response_data}");
+
+    Ok(())
+}
