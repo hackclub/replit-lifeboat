@@ -65,7 +65,7 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
     send_email(
         &email,
         "Your Replit⠕ export is on its way!".into(),
-        format!("Heya {}!! Your Replit⠕ takeout 🥡 will be with you soon.\nPlease stand in line while our interns pack your order 📦.", user.username),
+        format!("Heya {}!! Your Replit⠕ takeout 🥡 will be with you within a few days.\nPlease stand in line while our interns pack your order 📦.", user.username),
     )
     .await;
 

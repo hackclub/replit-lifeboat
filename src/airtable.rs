@@ -37,7 +37,7 @@ pub async fn add_user(user: AirtableSyncedUser) -> bool {
         created_time: None,
     };
 
-    get_records().await;
+    // get_records().await;
 
     AIRTABLE.create_records(TABLE, vec![record]).await.is_ok()
 }

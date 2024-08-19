@@ -17,6 +17,7 @@ use serde::Deserialize;
 use crate::{
     airtable::{self, AirtableSyncedUser, ProcessState},
     crosisdownload::make_zip,
+    email::send_email,
 };
 
 static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
@@ -283,7 +284,14 @@ impl ProfileRepls {
 
         if did_error {
             synced_user.fields.status = ProcessState::Errored;
-            synced_user.fields.failed_ids = errored.join(",")
+            synced_user.fields.failed_ids = errored.join(",");
+
+            send_email(
+                &synced_user.fields.email,
+                "Your Replit⠕ export is slightly delayed :/".into(),
+                format!("Hey {}, We have run into an issue processing your Replit⠕ takeout 🥡.\nWe will manually review and confirm that all your data is included. If you don't hear back again within a few days email malted@hackclub.com. Sorry for the inconvenience.", synced_user.fields.username),
+            )
+            .await;
         } else {
             synced_user.fields.status = ProcessState::DownloadedRepls;
         }
@@ -299,23 +307,25 @@ impl ProfileRepls {
             current_user.username
         );
 
-        /*
         if !did_error {
             synced_user.fields.status = ProcessState::WaitingInR2;
         }
-        synced_user.fields.r2_link = ...; // FIXME: upload to r2
+
+        // synced_user.fields.r2_link = ...; // FIXME: upload to r2
 
         airtable::update_records(vec![synced_user.clone()]).await?;
-        */
 
-        /*
-        if did_error {
-            // FIXME: Send email
+        if !did_error {
+            send_email(
+                &synced_user.fields.email,
+                "Your Replit⠕ export is ready!".into(),
+                format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 30 days.", synced_user.fields.username, ""), // FIXME: put in r2 link
+            )
+            .await;
             synced_user.fields.status = ProcessState::R2LinkEmailSent;
 
             airtable::update_records(vec![synced_user]).await?;
         }
-        */
 
         Ok(())
     }

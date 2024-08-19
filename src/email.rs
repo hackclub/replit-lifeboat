@@ -15,7 +15,7 @@ use lettre::{
 //     pub name: &'a str,
 // }
 
-pub async fn send_email(to: &String, subject: String, body: String) -> bool {
+pub async fn send_email(to: &str, subject: String, body: String) -> bool {
     // "Malted <malted@hackclub.com>"
     let email = Message::builder()
         .from("Hack Club <malted@hackclub.com>".parse().unwrap())
@@ -26,12 +26,8 @@ pub async fn send_email(to: &String, subject: String, body: String) -> bool {
         .expect("a body");
 
     let creds = Credentials::new(
-        dotenv::var("GMAIL_SMTP_USER")
-            .expect("a gmail user in .env")
-            .into(),
-        dotenv::var("GMAIL_SMTP_PASS")
-            .expect("a gmail smtp password in .env")
-            .into(),
+        dotenv::var("GMAIL_SMTP_USER").expect("a gmail user in .env"),
+        dotenv::var("GMAIL_SMTP_PASS").expect("a gmail smtp password in .env"),
     );
 
     let sender: AsyncSmtpTransport<Tokio1Executor> =
