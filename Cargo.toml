@@ -34,3 +34,5 @@ chrono = "0.4.38"
 
 async_zip = { version = "0.0.17", features = ["tokio", "tokio-fs", "deflate", "async-compression"] }
 async-compression = { version = "0.4.12" }
+aws-region = "0.25.4"
+rust-s3 = "0.34.0"

@@ -148,7 +148,7 @@ async fn download_internal(
                     let fpath = if path.is_empty() {
                         file.path
                     } else {
-                        path.clone() + "/" + &file.path
+                        format!("{}/{}", path.clone(), &file.path)
                     };
 
                     // Ignore no go files

@@ -87,7 +87,7 @@ pub async fn recursively_flatten_dir(dir: String) -> Result<Vec<String>> {
             let fpath: String = if path.is_empty() {
                 fname
             } else {
-                path.clone() + "/" + &fname
+                format!("{}/{}", path.clone(), &fname)
             };
 
             let ftype = file.file_type().await?;
