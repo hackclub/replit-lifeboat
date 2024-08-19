@@ -30,7 +30,7 @@ use tokio::{
 use util::{do_ot, normalize_ts, recursively_flatten_dir};
 
 // Files to ignore for history and commits
-static NO_GO: [&str; 10] = [
+static NO_GO: [&str; 11] = [
     "node_modules",
     ".venv",
     ".pythonlibs",
@@ -41,6 +41,7 @@ static NO_GO: [&str; 10] = [
     ".config",
     "zig-cache",
     "zig-out",
+    "venv",
 ];
 const MAX_FILE_PARALLELISM: usize = 20;
 
@@ -212,12 +213,52 @@ pub async fn download(
     });
 
     let gcsfiles_download = client.open("gcsfiles".into(), None, None).await?;
+    let file_list_reader3 = file_list_reader2.clone();
     info!("Obtained 2nd gcsfiles for {replid}::{replname}");
     // Sadly have to clone if want main file downloads in parallel with ot downloads
     // Should test / benchmark if time is available.
     let main_download = download_locations.main.clone();
     let handle = tokio::spawn(async move {
         while let Ok(FilePath::Cont(path)) = file_list_reader2.recv().await {
+            let download_path = format!("{main_download}{path}");
+            let download_path = Path::new(&download_path);
+
+            if let Some(parent) = download_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            let res = gcsfiles_download
+                .request(Command {
+                    body: Some(Body::Read(goval::File {
+                        path: path.clone(),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })
+                .await?;
+
+            let content = match res.body {
+                Some(Body::File(goval::File { content, .. })) => content,
+                _ => return Err(format_err!("Invalid File.Content: {:#?}", res.body)),
+            };
+
+            fs::write(download_path, content).await?;
+
+            info!("Downloaded {path}");
+        }
+
+        file_list_reader2.close();
+
+        Ok(())
+    });
+
+    let gcsfiles_download = client.open("gcsfiles".into(), None, None).await?;
+    info!("Obtained 3rd gcsfiles for {replid}::{replname}");
+    // Sadly have to clone if want main file downloads in parallel with ot downloads
+    // Should test / benchmark if time is available.
+    let main_download = download_locations.main.clone();
+    let handle2 = tokio::spawn(async move {
+        while let Ok(FilePath::Cont(path)) = file_list_reader3.recv().await {
             let download_path = format!("{main_download}{path}");
             let download_path = Path::new(&download_path);
 
@@ -292,6 +333,7 @@ pub async fn download(
     info!("Read file history for {replid}::{replname}");
 
     handle.await??;
+    handle2.await??;
 
     info!("Downloaded final file contents for {replid}::{replname}");
     writer.close();

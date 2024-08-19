@@ -9,6 +9,7 @@ authors = ["Ben Dixon <malted@malted.dev>"]
 [dependencies]
 anyhow = "1.0.86"
 async-trait = "0.1.81"
+# console-subscriber = "0.4.0"
 crc32fast = "1.4.2"
 # crosis = { path = "../../replit/rust-crosis", version = "0.2.0", default-features = false, features = ["chan_buf", "serde"]  }
 crosis = { git = "https://github.com/PotentialStyx/crosis-rust.git", version = "0.3.1", default-features = false, features = ["chan_buf", "serde"]  }

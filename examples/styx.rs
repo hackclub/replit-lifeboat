@@ -36,6 +36,8 @@ static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // console_subscriber::init();
+
     env_logger::init();
 
     let connect_sid = std::env::args().nth(1).expect("a token");
