@@ -1,8 +1,14 @@
+use chrono::Utc;
+use log::{error, info};
 use replit_takeout::{
     airtable,
     email::send_email,
     replit_graphql::{ProfileRepls, QuickUser},
 };
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use serde_json::json;
+use std::env;
+use tokio;
 
 #[macro_use]
 extern crate rocket;
@@ -13,7 +19,6 @@ mod crosisdownload;
 async fn rocket() -> _ {
     env_logger::init();
     dotenv::dotenv().ok();
-
     rocket::build().mount("/", routes![hello, signup])
 }
 

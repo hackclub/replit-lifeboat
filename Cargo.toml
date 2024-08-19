@@ -29,3 +29,5 @@ serde = "1.0.208"
 serde_json = "1.0.125"
 time = "0.3.36"
 tokio = { version = "1.39.3", features = ["fs", "macros", "net", "rt-multi-thread"] }
+openssl = { version = "0.10.59", features = ["vendored"] }
+chrono = "0.4.38"
