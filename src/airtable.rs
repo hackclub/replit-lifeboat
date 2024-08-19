@@ -47,7 +47,15 @@ pub async fn get_records() {
         .list_records(
             TABLE,
             "Grid view",
-            vec!["ID", "Username", "Email", "Status"],
+            vec![
+                "ID",
+                "Connection Token",
+                "Username",
+                "Email",
+                "Status",
+                "R2 Link",
+                "Failed Repl IDs",
+            ],
         )
         .await
         .unwrap();
