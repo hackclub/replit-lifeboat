@@ -9,19 +9,23 @@ authors = ["Ben Dixon <malted@malted.dev>"]
 [dependencies]
 anyhow = "1.0.86"
 async-trait = "0.1.81"
-# crosis = { path = "../../replit/rust-crosis", version = "0.2.0", default-features = false, features = ["chan_buf", "serde"]  }
-crosis = { git = "https://github.com/PotentialStyx/crosis-rust.git", version = "0.2.0", default-features = false, features = ["chan_buf", "serde"]  }
+# console-subscriber = "0.4.0"
+crc32fast = "1.4.2"
+crosis = { git = "https://github.com/PotentialStyx/crosis-rust.git", version = "0.3.3", default-features = false, features = ["chan_buf", "serde", "notif_on_close"]  }
 airtable-api = "0.1.36"
 dotenv = "0.15.0"
 env_logger = "0.11.5"
 flume = "0.11.0"
-graphql_client = { version = "0.14.0", features = ["reqwest", "reqwest-blocking"] }
+graphql_client = { version = "0.14.0", features = ["reqwest"] }
 lettre = { version = "0.11.7", features = ["tokio1", "tokio1-native-tls"] }
+kanal = { version = "0.1.0-pre8", default-features = false, features = ["async"] }
+git2 = "0.19.0"
 log = "0.4.22"
 once_cell = "1.19.0"
 reqwest = { version = "0.12.5", features = ["blocking", "cookies", "json"] }
-resend-rs = "0.9.1"
+ropey = "1.6.1"
 rocket = { version = "0.5.1", features = ["json"] }
 serde = "1.0.208"
 serde_json = "1.0.125"
+time = "0.3.36"
 tokio = { version = "1.39.3", features = ["fs", "macros", "net", "rt-multi-thread"] }

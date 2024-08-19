@@ -13,6 +13,7 @@ query ProfileRepls($after: String, $id: Int!) {
 				isProjectFork
 				likeCount
 				language
+				timeCreated
 			}
 			pageInfo {
 				hasNextPage

@@ -1,20 +1,30 @@
 mod metadata;
+mod util;
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc};
 
 use anyhow::{format_err, Result};
 use crosis::{
-    goval::{self, command::Body, Command},
+    goval::{self, command::Body, Command, StatResult},
     Channel, Client,
 };
-use log::{debug, error, info};
+use git2::{Repository, Signature, Time};
+use log::{debug, error, info, warn};
 use metadata::CookieJarConnectionMetadataFetcher;
 use reqwest::{cookie::Jar, header::HeaderMap};
+use ropey::Rope;
 use serde::Serialize;
-use tokio::fs;
+use time::OffsetDateTime;
+// use serde::Serialize;
+use tokio::{
+    fs,
+    io::AsyncWriteExt,
+    sync::{OwnedSemaphorePermit, Semaphore},
+};
+use util::{do_ot, normalize_ts, recursively_flatten_dir};
 
 // Files to ignore for history and commits
-static NO_GO: [&str; 8] = [
+static NO_GO: [&str; 11] = [
     "node_modules",
     ".venv",
     ".pythonlibs",
@@ -23,19 +33,36 @@ static NO_GO: [&str; 8] = [
     ".upm",
     ".cache",
     ".config",
+    "zig-cache",
+    "zig-out",
+    "venv",
 ];
 const MAX_FILE_PARALLELISM: usize = 20;
+
+pub struct DownloadLocations {
+    pub main: String,
+    pub git: String,
+    pub staging_git: String,
+    pub ot: String,
+}
+
+enum FilePath {
+    Cont(String),
+    Break,
+}
 
 pub async fn download(
     headers: HeaderMap,
     jar: Arc<Jar>,
     replid: String,
     replname: &str,
-    filepath: String,
+    download_locations: DownloadLocations,
+    ts_offset: i64,
+    email: String,
 ) -> Result<()> {
     debug!("https://replit.com/replid/{}", &replid);
 
-    let mut client = Client::new(Box::new(CookieJarConnectionMetadataFetcher {
+    let client = Client::new(Box::new(CookieJarConnectionMetadataFetcher {
         client: reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
         .default_headers(headers)
@@ -44,34 +71,68 @@ pub async fn download(
         replid: replid.clone(),
     }));
 
-    let mut chan0 = client.connect().await?;
+    let close_watcher = client.close_recv.clone();
+
+    tokio::select! {
+        res = download_internal(client, replid, replname, download_locations, ts_offset, email) => {
+            res
+        }
+        data = close_watcher.recv() => {
+            Err(format_err!("Websocket was closed: {data:#?}"))
+        }
+    }
+}
+
+pub async fn download_internal(
+    mut client: Client,
+    replid: String,
+    replname: &str,
+    download_locations: DownloadLocations,
+    ts_offset: i64,
+    email: String,
+) -> Result<()> {
+    // Will take up to a max of 2 minutes until it fails if ratelimited
+    let mut chan0 = client.connect_max_retries_and_backoff(5, 3000, 2).await?;
 
     info!("Connected to {replid}::{replname}");
-
-    tokio::spawn(async move {
-        while let Ok(msg) = chan0.next().await {
-            if let Some(body) = msg.body {
-                match body {
-                    Body::Ping(_) | Body::Pong(_) => {}
-                    _ => {
-                        debug!("{body:#?}")
+    {
+        let (connected_send, connected_read) = kanal::oneshot_async();
+        let mut connected_send = Some(connected_send);
+        tokio::spawn(async move {
+            while let Ok(msg) = chan0.next().await {
+                if let Some(body) = msg.body {
+                    match body {
+                        Body::Ping(_) | Body::Pong(_) => {}
+                        Body::BootStatus(goval::BootStatus { stage, .. }) => {
+                            if goval::boot_status::Stage::from_i32(stage)
+                                == Some(goval::boot_status::Stage::Complete)
+                            {
+                                if let Some(send) = connected_send.take() {
+                                    send.send(()).await.expect("Sender is alive");
+                                }
+                            }
+                        }
+                        _ => {
+                            debug!("{body:#?}")
+                        }
                     }
                 }
             }
-        }
-    });
+        });
 
-    // I hate this but it's needed
-    tokio::time::sleep(Duration::from_secs(3)).await;
+        connected_read.recv().await?;
+    }
 
-    let gcsfiles = client.open("gcsfiles".into(), None, None).await?;
-    info!("Obtained gcsfiles for {replid}::{replname}");
+    let gcsfiles_scan = client.open("gcsfiles".into(), None, None).await?;
+    info!("Obtained 1st gcsfiles for {replid}::{replname}");
 
-    let mut files_list = vec![];
+    let (file_list_writer, file_list_reader) = kanal::unbounded_async();
+    let (file_list_writer2, file_list_reader2) = kanal::unbounded_async();
+    let file_finder_handle = tokio::spawn(async move {
+        // let mut files_list = vec![];
+        let mut is_git = false;
 
-    // Scope all the temporary file stuff
-    {
-        let mut fres = gcsfiles
+        let mut fres = gcsfiles_scan
             .request(Command {
                 body: Some(Body::Readdir(goval::File {
                     path: ".".to_string(),
@@ -79,7 +140,7 @@ pub async fn download(
                 })),
                 ..Default::default()
             })
-            .await;
+            .await?;
         let mut path = String::new();
         let mut to_check_dirs = vec![];
 
@@ -87,7 +148,7 @@ pub async fn download(
             if let Some(Body::Files(files)) = fres.body {
                 for file in files.files {
                     let fpath = if path.is_empty() {
-                        file.path.clone()
+                        file.path
                     } else {
                         path.clone() + "/" + &file.path
                     };
@@ -98,8 +159,41 @@ pub async fn download(
                     }
 
                     match goval::file::Type::from_i32(file.r#type) {
-                        Some(goval::file::Type::Directory) => to_check_dirs.push(fpath),
-                        Some(goval::file::Type::Regular) => files_list.push(fpath),
+                        Some(goval::file::Type::Directory) => {
+                            if fpath == ".git" {
+                                is_git = true;
+                            } else if fpath == ".replit-takeout-otbackup" {
+                                file_list_writer.send(FilePath::Break).await?;
+                                return Err(format_err!(
+                                    "Repl cannot already have `.replit-takeout-otbackup/` dir"
+                                ));
+                            }
+                            to_check_dirs.push(fpath)
+                        }
+                        Some(goval::file::Type::Regular) => {
+                            let res = gcsfiles_scan
+                                .request(Command {
+                                    body: Some(Body::Stat(goval::File {
+                                        path: fpath.clone(),
+                                        ..Default::default()
+                                    })),
+                                    ..Default::default()
+                                })
+                                .await?;
+
+                            let size = match res.body {
+                                Some(Body::StatRes(StatResult { size, .. })) => size,
+                                _ => return Err(format_err!("Invalid StatRes: {:#?}", res.body)),
+                            };
+
+                            if size > 50000000 {
+                                warn!("{fpath} is larger than max download size of 50mb");
+                            } else {
+                                file_list_writer.send(FilePath::Cont(fpath.clone())).await?;
+
+                                file_list_writer2.send(FilePath::Cont(fpath)).await?;
+                            }
+                        }
                         _ => {
                             error!("bruh")
                         }
@@ -110,7 +204,7 @@ pub async fn download(
             if let Some(npath) = to_check_dirs.pop() {
                 path = npath;
 
-                fres = gcsfiles
+                fres = gcsfiles_scan
                     .request(Command {
                         body: Some(Body::Readdir(goval::File {
                             path: path.clone(),
@@ -118,44 +212,173 @@ pub async fn download(
                         })),
                         ..Default::default()
                     })
-                    .await;
+                    .await?;
                 debug!("Obtained file tree for path `{path}`: {:#?}", fres);
             } else {
                 break;
             }
         }
-    }
 
-    info!("Obtained file list for {replid}::{replname}");
+        file_list_writer.send(FilePath::Break).await?;
 
-    // Chunk file fetching to not open like 500 channels at the same time
-    for chunk in files_list.chunks(MAX_FILE_PARALLELISM).map(|x| x.to_vec()) {
-        let mut set = tokio::task::JoinSet::new();
-        for file in chunk {
-            let file_channel = client
-                .open(
-                    "ot".to_string(),
-                    Some(format!("ot:{file}")),
-                    Some(goval::open_channel::Action::AttachOrCreate),
-                )
+        // info!("Obtained file list for {replid}::{replname}");
+
+        Ok((file_list_writer, is_git))
+    });
+
+    let gcsfiles_download = client.open("gcsfiles".into(), None, None).await?;
+    let file_list_reader3 = file_list_reader2.clone();
+    info!("Obtained 2nd gcsfiles for {replid}::{replname}");
+    // Sadly have to clone if want main file downloads in parallel with ot downloads
+    // Should test / benchmark if time is available.
+    let main_download = download_locations.main.clone();
+    let handle = tokio::spawn(async move {
+        while let Ok(FilePath::Cont(path)) = file_list_reader2.recv().await {
+            let download_path = format!("{main_download}{path}");
+            let download_path = Path::new(&download_path);
+
+            if let Some(parent) = download_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            let res = gcsfiles_download
+                .request(Command {
+                    body: Some(Body::Read(goval::File {
+                        path: path.clone(),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })
                 .await?;
-            set.spawn(handle_file(
-                file_channel,
-                format!("{filepath}{file}"),
-                file,
-                0,
-            ));
+
+            let content = match res.body {
+                Some(Body::File(goval::File { content, .. })) => content,
+                _ => return Err(format_err!("Invalid File.Content: {:#?}", res.body)),
+            };
+
+            fs::write(download_path, content).await?;
+
+            info!("Downloaded {path}");
         }
 
+        file_list_reader2.close();
+
+        Ok(())
+    });
+
+    let gcsfiles_download = client.open("gcsfiles".into(), None, None).await?;
+    info!("Obtained 3rd gcsfiles for {replid}::{replname}");
+    // Sadly have to clone if want main file downloads in parallel with ot downloads
+    // Should test / benchmark if time is available.
+    let main_download = download_locations.main.clone();
+    let handle2 = tokio::spawn(async move {
+        while let Ok(FilePath::Cont(path)) = file_list_reader3.recv().await {
+            let download_path = format!("{main_download}{path}");
+            let download_path = Path::new(&download_path);
+
+            if let Some(parent) = download_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            let res = gcsfiles_download
+                .request(Command {
+                    body: Some(Body::Read(goval::File {
+                        path: path.clone(),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })
+                .await?;
+
+            let content = match res.body {
+                Some(Body::File(goval::File { content, .. })) => content,
+                _ => return Err(format_err!("Invalid File.Content: {:#?}", res.body)),
+            };
+
+            fs::write(download_path, content).await?;
+
+            info!("Downloaded {path}");
+        }
+
+        Ok(())
+    });
+
+    // if is_git {
+    //     warn!("History -> git not currently supported for existing git repos")
+    // }
+
+    let semaphore = Arc::new(Semaphore::new(MAX_FILE_PARALLELISM));
+    let mut set = tokio::task::JoinSet::new();
+
+    while let Ok(FilePath::Cont(file)) = file_list_reader.recv().await {
+        let permit = semaphore.clone().acquire_owned().await?;
+
+        let file_channel = client
+            .open(
+                "ot".to_string(),
+                Some(format!("ot:{file}")),
+                Some(goval::open_channel::Action::AttachOrCreate),
+            )
+            .await?;
+
+        set.spawn(handle_file(
+            file_channel,
+            format!("{}{file}", download_locations.ot),
+            download_locations.staging_git.clone(),
+            file.clone(),
+            ts_offset,
+            permit,
+        ));
+
+        // Poke 👉
         client.poke_buf().await;
-
-        while let Some(res) = set.join_next().await {
-            res??
-        }
     }
+
+    // Poke 👉
+    client.poke_buf().await;
+
+    while let Some(res) = set.join_next().await {
+        res??
+    }
+
+    let (writer, is_git) = file_finder_handle.await??;
 
     info!("Read file history for {replid}::{replname}");
 
+    handle.await??;
+    handle2.await??;
+
+    info!("Downloaded final file contents for {replid}::{replname}");
+    writer.close();
+
+    // if !is_git.load(atomic::Ordering::Relaxed) {
+    build_git(
+        download_locations.main,
+        download_locations.staging_git,
+        download_locations.git,
+        download_locations.ot,
+        ts_offset,
+        email,
+        is_git,
+    )
+    .await?;
+
+    info!("Built git repo from history snapshots for {replid}::{replname}");
+    // } else {
+    //     fs::remove_dir_all(download_locations.staging_git).await?;
+    //     fs::remove_dir_all(download_locations.git).await?;
+    // }
+
+    // let repo = tokio::task::spawn_blocking(move || {
+    //     match git2::Repository::open(&download_locations.main) {
+    //         Err(err) => {
+    //             dbg!(err.code());
+    //             None
+    //         }
+    //         Ok(repo) => Some(repo),
+    //     }
+    // })
+    // .await?;
     // client.destroy().await?;
 
     info!("Disconnected from {replid}::{replname}");
@@ -166,12 +389,21 @@ pub async fn download(
 pub async fn handle_file(
     mut channel: Channel,
     local_filename: String,
+    staging_dir: String,
     filename: String,
-    global_ts: u64,
+    global_ts: i64,
+    permit: OwnedSemaphorePermit,
 ) -> Result<()> {
-    let otstatus = match channel.next().await.unwrap().body {
+    // TODO: do other stuff l8r
+    if filename.starts_with(".git") {
+        return Ok(());
+    }
+
+    let res = channel.next().await.unwrap().body;
+
+    let otstatus = match res {
         Some(Body::Otstatus(otstatus)) => otstatus,
-        _ => return Err(format_err!("Invalid Otstatus")),
+        _ => return Err(format_err!("Invalid Otstatus: {:#?}", res)),
     };
 
     let version = if otstatus.linked_file.is_some() {
@@ -188,7 +420,7 @@ pub async fn handle_file(
                 })),
                 ..Default::default()
             })
-            .await;
+            .await?;
 
         let linkfileres = match res.body {
             Some(Body::OtLinkFileResponse(linkfileres)) => linkfileres,
@@ -197,6 +429,19 @@ pub async fn handle_file(
 
         linkfileres.version
     };
+
+    if version == 0 {
+        let path = Path::new(&local_filename);
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+
+        info!("{filename} has no history...");
+        fs::write(path, "[]").await?;
+
+        return Ok(());
+    }
 
     info!("{filename} is on version #{version}");
 
@@ -208,12 +453,92 @@ pub async fn handle_file(
             })),
             ..Default::default()
         })
-        .await;
+        .await?;
 
     let history = match res.body {
         Some(Body::OtFetchResponse(history)) => history,
-        _ => return Err(format_err!("Invalid OtFetchResponse")),
+        _ => return Err(format_err!("Invalid OtFetchResponse: {:#?}", res.body)),
     };
+
+    // GIT STUFF!
+    if !history.packets.is_empty() {
+        let mut contents = Rope::new();
+
+        let mut timestamp = normalize_ts(
+            history
+                .packets
+                .first()
+                .expect("Has to exist")
+                .committed
+                .as_ref()
+                .map(|ts| ts.seconds)
+                .unwrap_or(0),
+            global_ts,
+        );
+
+        for packet in &history.packets {
+            let new_ts = normalize_ts(
+                packet.committed.as_ref().map(|ts| ts.seconds).unwrap_or(0),
+                global_ts,
+            );
+
+            if new_ts != timestamp {
+                let staging_ts_path = format!("{staging_dir}{timestamp}/{filename}");
+                let path = Path::new(&staging_ts_path);
+
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).await?;
+                }
+
+                let mut file_writer = fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(path)
+                    .await?;
+
+                for chunk in contents.chunks() {
+                    let bytes = chunk.as_bytes();
+
+                    file_writer.write_all(bytes).await?;
+                }
+
+                file_writer.flush().await?;
+                file_writer.sync_data().await?;
+
+                drop(file_writer);
+
+                timestamp = new_ts;
+            }
+
+            do_ot(&mut contents, packet)?;
+        }
+
+        let staging_ts_path_final = format!("{staging_dir}{timestamp}/{filename}");
+        let path = Path::new(&staging_ts_path_final);
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+
+        let mut file_writer = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .await?;
+
+        for chunk in contents.chunks() {
+            let bytes = chunk.as_bytes();
+
+            file_writer.write_all(bytes).await?;
+        }
+
+        file_writer.flush().await?;
+        file_writer.sync_data().await?;
+
+        drop(file_writer);
+    }
 
     let mut new_history = vec![];
 
@@ -226,10 +551,16 @@ pub async fn handle_file(
                 goval::ot_op_component::OpComponent::Insert(text) => OtOp::Insert(text),
             })
         }
+
+        let timestamp = item.committed.map(|ts| ts.seconds).unwrap_or(0);
         new_history.push(OtFetchPacket {
             ops,
             crc32: item.crc32,
-            timestamp: item.committed.map(|ts| ts.seconds).unwrap_or(0),
+            timestamp,
+            ts_string: format!(
+                "{}",
+                OffsetDateTime::from_unix_timestamp(normalize_ts(timestamp, global_ts))?
+            ),
             version: item.version,
         })
     }
@@ -242,19 +573,216 @@ pub async fn handle_file(
 
     fs::write(path, serde_json::to_string(&new_history)?).await?;
 
-    // debug!("Got history for {filename}: {history:#?}");
+    info!("Downloaded history for {filename}");
+
+    drop(permit);
+
+    Ok(())
+}
+
+pub async fn build_git(
+    main_dir: String,
+    staging_dir: String,
+    git_dir: String,
+    ot_dir: String,
+    global_ts: i64,
+    email: String,
+    git_already_exists: bool,
+) -> Result<()> {
+    if git_already_exists {
+        let files = recursively_flatten_dir(main_dir.clone()).await?;
+
+        for file in files {
+            let file = file.strip_prefix(&main_dir).unwrap_or(&file);
+
+            let to_buf = format!("{git_dir}{file}");
+            let to = Path::new(&to_buf);
+
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            fs::rename(format!("{main_dir}/{file}"), to).await?;
+        }
+    }
+
+    let git_dir2 = git_dir.clone();
+    let email2 = email.clone();
+    let mut repo = tokio::task::spawn_blocking(move || -> Result<Repository> {
+        let repo;
+        let author = Signature::new("Replit Takeout", &email2, &Time::new(global_ts, 0))?;
+
+        if !git_already_exists {
+            repo = git2::Repository::init(&git_dir2)?;
+
+            let mut index = repo.index()?;
+            let oid = index.write_tree()?;
+            let tree = repo.find_tree(oid)?;
+
+            repo.commit(Some("HEAD"), &author, &author, "Initial Commit", &tree, &[])?;
+        } else {
+            repo = git2::Repository::open(&git_dir2)?;
+
+            let mut index = repo.index()?;
+            let oid = index.write_tree()?;
+            let tree = repo.find_tree(oid)?;
+
+            let commit_oid = repo.commit(None, &author, &author, "Initial Commit", &tree, &[])?;
+
+            let commit = repo.find_commit(commit_oid)?;
+
+            let _ = repo.branch("replit-takeout-history", &commit, false)?;
+
+            let refname = "replit-takeout-history";
+            let (object, reference) = repo.revparse_ext(refname).expect("Object not found");
+
+            repo.checkout_tree(&object, None)
+                .expect("Failed to checkout");
+
+            match reference {
+                // gref is an actual reference like branches or tags
+                Some(gref) => repo.set_head(gref.name().unwrap()),
+                // this is a commit, not a reference
+                None => repo.set_head_detached(object.id()),
+            }
+            .expect("Failed to set HEAD");
+        };
+
+        Ok(repo)
+    })
+    .await??;
+
+    let mut timestamps: Vec<i64> = vec![];
+    let mut reader = fs::read_dir(&staging_dir).await?;
+    while let Some(entry) = reader.next_entry().await? {
+        if entry.file_type().await?.is_dir() {
+            timestamps.push(
+                entry
+                    .file_name()
+                    .into_string()
+                    .expect("This is only [0-9]*")
+                    .parse()
+                    .expect("Garunteed to parse"),
+            )
+        }
+    }
+
+    timestamps.sort_unstable();
+
+    let mut last_snapshot = global_ts;
+    for snapshot in timestamps {
+        last_snapshot = snapshot;
+        let head = format!("{staging_dir}{snapshot}");
+        let files = recursively_flatten_dir(head.clone()).await?;
+        let head_prefix = head.clone() + "/";
+
+        for file in files {
+            let file = file.strip_prefix(&head_prefix).unwrap_or(&file);
+
+            let to_buf = format!("{git_dir}{file}");
+            let to = Path::new(&to_buf);
+
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            fs::rename(format!("{head}/{file}"), to).await?;
+        }
+
+        let email2 = email.clone();
+
+        repo = tokio::task::spawn_blocking(move || -> Result<Repository> {
+            {
+                let mut index = repo.index()?;
+                index.add_all(["."], git2::IndexAddOption::DEFAULT, None)?;
+                index.write()?;
+
+                let oid = index.write_tree()?;
+                let parent_commit = repo.head()?.peel_to_commit()?;
+                let tree = repo.find_tree(oid)?;
+
+                // TODO: Put real email here
+                let author = Signature::new("Replit Takeout", &email2, &Time::new(snapshot, 0))?;
+
+                repo.commit(
+                    Some("HEAD"),
+                    &author,
+                    &author,
+                    "History snapshot",
+                    &tree,
+                    &[&parent_commit],
+                )?;
+            }
+
+            Ok(repo)
+        })
+        .await??;
+    }
+
+    fs::remove_dir_all(&staging_dir).await?;
+
+    let files = recursively_flatten_dir(main_dir.clone()).await?;
+
+    for file in files {
+        let file = file.strip_prefix(&main_dir).unwrap_or(&file);
+
+        let to_buf = format!("{git_dir}{file}");
+        let to = Path::new(&to_buf);
+
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+
+        fs::rename(format!("{main_dir}/{file}"), to).await?;
+    }
+
+    let email2 = email.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut index = repo.index()?;
+        index.add_all(["."], git2::IndexAddOption::DEFAULT, None)?;
+        index.write()?;
+
+        let oid = index.write_tree()?;
+        let parent_commit = repo.head()?.peel_to_commit()?;
+        let tree = repo.find_tree(oid)?;
+
+        // TODO: Put real email here
+        let author = Signature::new("Replit Takeout", &email2, &Time::new(last_snapshot, 0))?;
+
+        repo.commit(
+            Some("HEAD"),
+            &author,
+            &author,
+            "Final history snapshot",
+            &tree,
+            &[&parent_commit],
+        )?;
+
+        Ok(())
+    })
+    .await??;
+
+    fs::remove_dir_all(&main_dir).await?;
+
+    fs::rename(&git_dir, &main_dir).await?;
+
+    fs::rename(&ot_dir, format!("{main_dir}/.replit-takeout-otbackup/")).await?;
+
     Ok(())
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct OtFetchPacket {
     ops: Vec<OtOp>,
     crc32: u32,
     timestamp: i64,
+    ts_string: String,
     version: u32,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 enum OtOp {
     Insert(String),
     Skip(u32),
