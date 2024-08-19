@@ -24,12 +24,7 @@ pub struct AirtableSyncedUser {
 pub async fn add_user(user: AirtableSyncedUser) -> bool {
     let record: Record<AirtableSyncedUser> = Record {
         id: "".into(),
-        fields: AirtableSyncedUser {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            status: user.status,
-        },
+        fields: user,
         created_time: None,
     };
 

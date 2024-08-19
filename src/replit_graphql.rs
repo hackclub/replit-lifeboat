@@ -61,45 +61,51 @@ pub struct QuickUserQuery;
 pub struct QuickUser {
     pub id: i64,
     pub username: String,
-    pub email: Option<String>,
+    pub email: String,
 }
-impl QuickUser {
-    pub async fn fetch(
-        token: &String,
-        client_opt: Option<Client>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = create_client(token, client_opt)?;
 
+impl QuickUser {
+    pub async fn fetch(token: &String, client_opt: Option<Client>) -> Result<Self, String> {
+        let client = create_client(token, client_opt).map_err(|e| e.to_string())?;
         let user_data: String = client
             .post(REPLIT_GQL_URL)
             .json(&QuickUserQuery::build_query(quick_user_query::Variables {}))
             .send()
-            .await?
+            .await
+            .map_err(|e| e.to_string())?
             .text()
-            .await?;
-        // Converting to string then json so we can see what's going on if
-        // there are any json deserialisation errors eg it doesn't match up
-        // with the schema etc.
+            .await
+            .map_err(|e| e.to_string())?;
+
         debug!(
             "{}:{} Raw text quick user data: {user_data}",
             std::line!(),
             std::column!()
         );
-        let user_data: Response<quick_user_query::ResponseData> = serde_json::from_str(&user_data)?;
+
+        let user_data: Response<quick_user_query::ResponseData> =
+            serde_json::from_str(&user_data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
         let user_data = user_data.data;
-        let id = user_data.clone().and_then(|d| d.current_user).map(|u| u.id);
+        let id = user_data
+            .clone()
+            .and_then(|d| d.current_user)
+            .map(|u| u.id)
+            .ok_or_else(|| "Missing user id".to_string())?;
         let username = user_data
             .clone()
             .and_then(|d| d.current_user)
-            .map(|u| u.username);
+            .map(|u| u.username)
+            .ok_or_else(|| "Missing username".to_string())?;
         let email = user_data
             .clone()
             .and_then(|d| d.current_user)
-            .map(|u| u.email);
+            .map(|u| u.email)
+            .ok_or_else(|| "Missing email".to_string())?;
 
         Ok(Self {
-            id: id.expect("an id"),
-            username: username.expect("a username"),
+            id,
+            username,
             email,
         })
     }
