@@ -96,7 +96,7 @@ pub async fn download_inernal(
     ts_offset: i64,
 ) -> Result<()> {
     // Will take up to a max of 2 minutes until it fails if ratelimited
-    let mut chan0 = client.connect_max_retries(5).await?;
+    let mut chan0 = client.connect_max_retries_and_backoff(5, 3000, 2).await?;
 
     info!("Connected to {replid}::{replname}");
     {

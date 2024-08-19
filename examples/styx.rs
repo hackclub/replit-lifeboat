@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
@@ -152,7 +154,7 @@ async fn main() -> Result<()> {
 
                 dbg!(ts);
 
-                if let Err(err) = download(
+                let download_job = download(
                     headers.clone(),
                     jar.clone(),
                     repl.id.clone(),
@@ -164,15 +166,25 @@ async fn main() -> Result<()> {
                         ot: ot_location.clone(),
                     },
                     ts.unix_timestamp(),
-                )
-                .await
-                {
-                    error!(
-                        "Downloading {}::{} failed with error: {err:#?}",
-                        repl.id, repl.slug
-                    )
-                } else {
-                    info!("Downloaded {}::{}", repl.id, repl.slug);
+                );
+
+                // At 30 minutes abandon the repl download
+                match tokio::time::timeout(Duration::from_secs(60 * 30), download_job).await {
+                    Err(_) => {
+                        error!(
+                            "Downloading {}::{} timed out after 30 minutes",
+                            repl.id, repl.slug
+                        )
+                    }
+                    Ok(Err(err)) => {
+                        error!(
+                            "Downloading {}::{} failed with error: {err:#?}",
+                            repl.id, repl.slug
+                        )
+                    }
+                    Ok(Ok(_)) => {
+                        info!("Downloaded {}::{}", repl.id, repl.slug);
+                    }
                 }
 
                 // let url = format!("https://replit.com{}.zip", repl.url);
