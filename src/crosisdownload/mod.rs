@@ -23,7 +23,7 @@ use tokio::{
 use util::{do_ot, normalize_ts, recursively_flatten_dir};
 
 // Files to ignore for history and commits
-static NO_GO: [&str; 11] = [
+static NO_GO: [&str; 13] = [
     "node_modules",
     ".venv",
     ".pythonlibs",
@@ -35,6 +35,8 @@ static NO_GO: [&str; 11] = [
     "zig-cache",
     "zig-out",
     "venv",
+    ".deno",
+    "__MACOSX",
 ];
 const MAX_FILE_PARALLELISM: usize = 20;
 
@@ -77,7 +79,7 @@ pub async fn download(
     }
 }
 
-pub async fn download_internal(
+async fn download_internal(
     mut client: Client,
     replid: String,
     replname: &str,
@@ -342,6 +344,31 @@ pub async fn download_internal(
     handle.await??;
     handle2.await??;
 
+    let secrets = client
+        .open(
+            "secrets".to_string(),
+            Some("secretser".to_string()),
+            Some(goval::open_channel::Action::AttachOrCreate),
+        )
+        .await?;
+
+    let res = secrets
+        .request(Command {
+            body: Some(Body::SecretsGetRequest(goval::SecretsGetRequest {})),
+            ..Default::default()
+        })
+        .await?;
+
+    let dotenv_content = match res.body {
+        Some(Body::SecretsGetResponse(goval::SecretsGetResponse { contents, .. })) => {
+            Some(contents)
+        }
+        _ => {
+            warn!("Invalid .env SecretsGetResponse: {:#?}", res.body);
+            None
+        }
+    };
+
     info!("Downloaded final file contents for {replid}::{replname}");
     writer.close();
 
@@ -354,6 +381,7 @@ pub async fn download_internal(
         ts_offset,
         email,
         is_git,
+        dotenv_content,
     )
     .await?;
 
@@ -373,14 +401,14 @@ pub async fn download_internal(
     //     }
     // })
     // .await?;
-    // client.destroy().await?;
+    client.destroy().await?;
 
     info!("Disconnected from {replid}::{replname}");
 
     Ok(())
 }
 
-pub async fn handle_file(
+async fn handle_file(
     mut channel: Channel,
     local_filename: String,
     staging_dir: String,
@@ -574,7 +602,8 @@ pub async fn handle_file(
     Ok(())
 }
 
-pub async fn build_git(
+#[allow(clippy::too_many_arguments)]
+async fn build_git(
     main_dir: String,
     staging_dir: String,
     git_dir: String,
@@ -582,6 +611,7 @@ pub async fn build_git(
     global_ts: i64,
     email: String,
     git_already_exists: bool,
+    dotenv_content: Option<String>,
 ) -> Result<()> {
     if git_already_exists {
         let files = recursively_flatten_dir(main_dir.clone()).await?;
@@ -730,6 +760,28 @@ pub async fn build_git(
         fs::rename(format!("{main_dir}/{file}"), to).await?;
     }
 
+    let gitignore_path = format!("{git_dir}.gitignore");
+    let gitignore_path = Path::new(&gitignore_path);
+
+    if fs::try_exists(gitignore_path).await? {
+        let mut writer = fs::OpenOptions::new()
+            .append(true)
+            .open(gitignore_path)
+            .await?;
+
+        writer
+            .write_all(
+                "\n\n# Replit Takeout Special Files\n.replit-takeout-otbackup/\n.env".as_bytes(),
+            )
+            .await?;
+    } else {
+        fs::write(
+            &gitignore_path,
+            "# Replit Takeout Special Files\n.replit-takeout-otbackup/\n.env",
+        )
+        .await?;
+    }
+
     let email2 = email.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut index = repo.index()?;
@@ -755,6 +807,15 @@ pub async fn build_git(
         Ok(())
     })
     .await??;
+
+    let dotenv_path = format!("{git_dir}.env");
+    let dotenv_path = Path::new(&dotenv_path);
+
+    if let Some(dotenv) = dotenv_content {
+        fs::write(dotenv_path, &dotenv).await?;
+    } else {
+        fs::write(dotenv_path, b"").await?;
+    }
 
     fs::remove_dir_all(&main_dir).await?;
 

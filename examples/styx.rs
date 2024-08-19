@@ -163,9 +163,11 @@ async fn main() -> Result<()> {
                 dbg!(ts);
 
                 let download_job = download(
-                    // headers.clone(),
-                    // jar.clone(),
-                    todo!(),
+                    reqwest::Client::builder()
+                        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
+                        .default_headers(headers.clone())
+                        .cookie_provider(jar.clone())
+                        .build()?,
                     repl.id.clone(),
                     &repl.slug,
                     DownloadLocations {
