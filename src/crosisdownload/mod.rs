@@ -79,7 +79,7 @@ pub async fn download(
     let close_watcher = client.close_recv.clone();
 
     tokio::select! {
-        res = download_inernal(client, replid, replname, download_locations, ts_offset) => {
+        res = download_internal(client, replid, replname, download_locations, ts_offset) => {
             res
         }
         data = close_watcher.recv() => {
@@ -88,7 +88,7 @@ pub async fn download(
     }
 }
 
-pub async fn download_inernal(
+pub async fn download_internal(
     mut client: Client,
     replid: String,
     replname: &str,
@@ -132,11 +132,9 @@ pub async fn download_inernal(
 
     let (file_list_writer, file_list_reader) = kanal::unbounded_async();
     let (file_list_writer2, file_list_reader2) = kanal::unbounded_async();
-    let is_git = Arc::new(AtomicBool::new(false));
-
-    let is_git2 = is_git.clone();
     let file_finder_handle = tokio::spawn(async move {
         // let mut files_list = vec![];
+        let mut is_git = false;
 
         let mut fres = gcsfiles_scan
             .request(Command {
@@ -167,11 +165,7 @@ pub async fn download_inernal(
                     match goval::file::Type::from_i32(file.r#type) {
                         Some(goval::file::Type::Directory) => {
                             if fpath == ".git" {
-                                warn!(
-                                    "History -> git not currently supported for existing git repos"
-                                );
-
-                                is_git2.store(true, atomic::Ordering::Relaxed);
+                                is_git = true;
                             }
                             to_check_dirs.push(fpath)
                         }
@@ -228,7 +222,7 @@ pub async fn download_inernal(
 
         // info!("Obtained file list for {replid}::{replname}");
 
-        Ok(file_list_writer)
+        Ok((file_list_writer, is_git))
     });
 
     let gcsfiles_download = client.open("gcsfiles".into(), None, None).await?;
@@ -333,7 +327,6 @@ pub async fn download_inernal(
             file.clone(),
             ts_offset,
             permit,
-            is_git.clone(),
         ));
 
         // Poke 👉
@@ -347,7 +340,7 @@ pub async fn download_inernal(
         res??
     }
 
-    let writer = file_finder_handle.await??;
+    let (writer, is_git) = file_finder_handle.await??;
 
     info!("Read file history for {replid}::{replname}");
 
@@ -357,19 +350,22 @@ pub async fn download_inernal(
     info!("Downloaded final file contents for {replid}::{replname}");
     writer.close();
 
-    if !is_git.load(atomic::Ordering::Relaxed) {
-        build_git(
-            download_locations.staging_git,
-            download_locations.git,
-            ts_offset,
-        )
-        .await?;
+    // if !is_git.load(atomic::Ordering::Relaxed) {
+    build_git(
+        download_locations.main,
+        download_locations.staging_git,
+        download_locations.git,
+        ts_offset,
+        String::from("malted@hackclub.com"),
+        is_git,
+    )
+    .await?;
 
-        info!("Built git repo from history snapshots for {replid}::{replname}");
-    } else {
-        fs::remove_dir_all(download_locations.staging_git).await?;
-        fs::remove_dir_all(download_locations.git).await?;
-    }
+    info!("Built git repo from history snapshots for {replid}::{replname}");
+    // } else {
+    //     fs::remove_dir_all(download_locations.staging_git).await?;
+    //     fs::remove_dir_all(download_locations.git).await?;
+    // }
 
     // let repo = tokio::task::spawn_blocking(move || {
     //     match git2::Repository::open(&download_locations.main) {
@@ -395,7 +391,6 @@ pub async fn handle_file(
     filename: String,
     global_ts: i64,
     permit: OwnedSemaphorePermit,
-    is_git: Arc<AtomicBool>,
 ) -> Result<()> {
     // TODO: do other stuff l8r
     if filename.starts_with(".git") {
@@ -464,7 +459,7 @@ pub async fn handle_file(
     };
 
     // GIT STUFF!
-    if !is_git.load(atomic::Ordering::Relaxed) && !history.packets.is_empty() {
+    if !history.packets.is_empty() {
         let mut contents = Rope::new();
 
         let mut timestamp = normalize_ts(
@@ -583,23 +578,73 @@ pub async fn handle_file(
     Ok(())
 }
 
-pub async fn build_git(staging_dir: String, git_dir: String, global_ts: i64) -> Result<()> {
+pub async fn build_git(
+    main_dir: String,
+    staging_dir: String,
+    git_dir: String,
+    global_ts: i64,
+    email: String,
+    git_already_exists: bool,
+) -> Result<()> {
+    if git_already_exists {
+        let files = recursively_flatten_dir(main_dir.clone()).await?;
+
+        for file in files {
+            let file = file.strip_prefix(&main_dir).unwrap_or(&file);
+
+            let to_buf = format!("{git_dir}{file}");
+            let to = Path::new(&to_buf);
+
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+
+            fs::rename(format!("{main_dir}/{file}"), to).await?;
+        }
+    }
+
     let git_dir2 = git_dir.clone();
     let mut repo = tokio::task::spawn_blocking(move || -> Result<Repository> {
-        let repo = git2::Repository::init(&git_dir2)?;
-        {
-            let author = Signature::new(
-                "Replit Takeout",
-                "malted@hackclub.com",
-                &Time::new(global_ts, 0),
-            )?;
+        let repo;
+
+        if !git_already_exists {
+            repo = git2::Repository::init(&git_dir2)?;
+            let author = Signature::new("Replit Takeout", &email, &Time::new(global_ts, 0))?;
 
             let mut index = repo.index()?;
             let oid = index.write_tree()?;
             let tree = repo.find_tree(oid)?;
 
             repo.commit(Some("HEAD"), &author, &author, "Initial Commit", &tree, &[])?;
-        }
+        } else {
+            repo = git2::Repository::open(&git_dir2)?;
+
+            let author = Signature::new("Replit Takeout", &email, &Time::new(global_ts, 0))?;
+
+            let mut index = repo.index()?;
+            let oid = index.write_tree()?;
+            let tree = repo.find_tree(oid)?;
+
+            let commit_oid = repo.commit(None, &author, &author, "Initial Commit", &tree, &[])?;
+
+            let commit = repo.find_commit(commit_oid)?;
+
+            let _ = repo.branch("replit-takeout-history", &commit, false)?;
+
+            let refname = "replit-takeout-history";
+            let (object, reference) = repo.revparse_ext(refname).expect("Object not found");
+
+            repo.checkout_tree(&object, None)
+                .expect("Failed to checkout");
+
+            match reference {
+                // gref is an actual reference like branches or tags
+                Some(gref) => repo.set_head(gref.name().unwrap()),
+                // this is a commit, not a reference
+                None => repo.set_head_detached(object.id()),
+            }
+            .expect("Failed to set HEAD");
+        };
 
         Ok(repo)
     })
