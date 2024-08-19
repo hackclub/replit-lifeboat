@@ -8,10 +8,24 @@
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <meta name="viewport" content="width=device-width" />
         <meta name="generator" content={Astro.generator} />
-        <title>Astro</title>
+        <title>Replit Takeout by Hack Club</title>
     </head>
-    <body>
-        <h1>Replit takeout</h1>
+    <body class="w-full mt-16 mx-auto max-w-4xl">
+        <h1 class="text-center text-3xl flex flex-col gap-1">
+            <span class="muted">Hack Club & GitHub</span>
+            <span class="text-xl opacity-60">presents</span>
+            <span>Replit Takeout</span>
+        </h1>
+
+        <p>
+            On 15 Aug 2024, Replit announced they will be shutting down their
+            free plan. High schoolers around the world relied on Replit to In
+            response, GitHub are expanding their <a
+                href="https://github.com/codespaces">Codespaces</a
+            > offering, allowing for x hours per month of compute for all students,
+            <b>for free</b>. We're partnering with them to help you utilise it.
+        </p>
+
         <form
             id="signupForm"
             method="POST"
@@ -34,5 +48,16 @@
                 }
             };
         </script>
+
+        <h2>Why</h2>
+        4 days ago, Replit sent out this email, announcing the end of their free
+        plan.
+
+        <embed
+            src="/Replit\ Starter\ Plan\ Changes.pdf"
+            width="25%"
+            height="400"
+            type="application/pdf"
+        />
     </body>
 </html>
