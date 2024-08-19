@@ -152,7 +152,7 @@ async fn main() -> Result<()> {
 
                 dbg!(ts);
 
-                download(
+                if let Err(err) = download(
                     headers.clone(),
                     jar.clone(),
                     repl.id.clone(),
@@ -165,9 +165,15 @@ async fn main() -> Result<()> {
                     },
                     ts.unix_timestamp(),
                 )
-                .await?;
-
-                info!("Downloaded {}::{}", repl.id, repl.slug);
+                .await
+                {
+                    error!(
+                        "Downloading {}::{} failed with error: {err:#?}",
+                        repl.id, repl.slug
+                    )
+                } else {
+                    info!("Downloaded {}::{}", repl.id, repl.slug);
+                }
 
                 // let url = format!("https://replit.com{}.zip", repl.url);
                 // info!("Downloading {} from {url}", repl.title);

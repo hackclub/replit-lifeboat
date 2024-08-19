@@ -67,7 +67,7 @@ pub async fn download(
 ) -> Result<()> {
     debug!("https://replit.com/replid/{}", &replid);
 
-    let mut client = Client::new(Box::new(CookieJarConnectionMetadataFetcher {
+    let client = Client::new(Box::new(CookieJarConnectionMetadataFetcher {
         client: reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
         .default_headers(headers)
@@ -76,6 +76,25 @@ pub async fn download(
         replid: replid.clone(),
     }));
 
+    let close_watcher = client.close_recv.clone();
+
+    tokio::select! {
+        res = download_inernal(client, replid, replname, download_locations, ts_offset) => {
+            res
+        }
+        data = close_watcher.recv() => {
+            Err(format_err!("Websocket was closed: {data:#?}"))
+        }
+    }
+}
+
+pub async fn download_inernal(
+    mut client: Client,
+    replid: String,
+    replname: &str,
+    download_locations: DownloadLocations,
+    ts_offset: i64,
+) -> Result<()> {
     // Will take up to a max of 2 minutes until it fails if ratelimited
     let mut chan0 = client.connect_max_retries(5).await?;
 
@@ -445,7 +464,7 @@ pub async fn handle_file(
     };
 
     // GIT STUFF!
-    if is_git.load(atomic::Ordering::Relaxed) && !history.packets.is_empty() {
+    if !is_git.load(atomic::Ordering::Relaxed) && !history.packets.is_empty() {
         let mut contents = Rope::new();
 
         let mut timestamp = normalize_ts(

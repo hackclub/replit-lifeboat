@@ -276,12 +276,13 @@ dependencies = [
 
 [[package]]
 name = "crosis"
-version = "0.3.1"
-source = "git+https://github.com/PotentialStyx/crosis-rust.git#3d7fe1b9a67c3261d76e4b6dbeaf3f8a8e6a5dde"
+version = "0.3.2"
+source = "git+https://github.com/PotentialStyx/crosis-rust.git#bceaecfa2da0cb03ff8cd0a459ccd22b5a147bd1"
 dependencies = [
  "async-trait",
  "fastrand",
  "futures-util",
+ "kanal",
  "prost",
  "prost-build",
  "prost-types",
