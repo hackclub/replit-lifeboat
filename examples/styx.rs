@@ -98,7 +98,15 @@ async fn main() -> Result<()> {
     fs::create_dir("repls").await?;
     fs::create_dir(format!("repls/{}", current_user.username)).await?;
 
+    let email = if current_user.email.is_empty() {
+        String::from("malted@hackclub.com")
+    } else {
+        current_user.email
+    };
+
     let mut after = None;
+    let mut i = 0;
+    let mut j = 0;
     loop {
         let profile_repls_data: Response<profile_repls::ResponseData> = client
             .post(REPLIT_GQL_URL)
@@ -166,6 +174,7 @@ async fn main() -> Result<()> {
                         ot: ot_location.clone(),
                     },
                     ts.unix_timestamp(),
+                    email.clone(),
                 );
 
                 // At 30 minutes abandon the repl download
@@ -184,8 +193,15 @@ async fn main() -> Result<()> {
                     }
                     Ok(Ok(_)) => {
                         info!("Downloaded {}::{}", repl.id, repl.slug);
+                        j += 1;
                     }
                 }
+
+                i += 1;
+
+                warn!(
+                    "Download stats: {j} correctly downloaded out of {i} total attempted downloads"
+                )
 
                 // let url = format!("https://replit.com{}.zip", repl.url);
                 // info!("Downloading {} from {url}", repl.title);

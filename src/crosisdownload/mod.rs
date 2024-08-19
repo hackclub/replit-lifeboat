@@ -1,13 +1,7 @@
 mod metadata;
 mod util;
 
-use std::{
-    path::Path,
-    sync::{
-        atomic::{self, AtomicBool},
-        Arc,
-    },
-};
+use std::{path::Path, sync::Arc};
 
 use anyhow::{format_err, Result};
 use crosis::{
@@ -64,6 +58,7 @@ pub async fn download(
     replname: &str,
     download_locations: DownloadLocations,
     ts_offset: i64,
+    email: String,
 ) -> Result<()> {
     debug!("https://replit.com/replid/{}", &replid);
 
@@ -79,7 +74,7 @@ pub async fn download(
     let close_watcher = client.close_recv.clone();
 
     tokio::select! {
-        res = download_internal(client, replid, replname, download_locations, ts_offset) => {
+        res = download_internal(client, replid, replname, download_locations, ts_offset, email) => {
             res
         }
         data = close_watcher.recv() => {
@@ -94,6 +89,7 @@ pub async fn download_internal(
     replname: &str,
     download_locations: DownloadLocations,
     ts_offset: i64,
+    email: String,
 ) -> Result<()> {
     // Will take up to a max of 2 minutes until it fails if ratelimited
     let mut chan0 = client.connect_max_retries_and_backoff(5, 3000, 2).await?;
@@ -166,6 +162,11 @@ pub async fn download_internal(
                         Some(goval::file::Type::Directory) => {
                             if fpath == ".git" {
                                 is_git = true;
+                            } else if fpath == ".replit-takeout-otbackup" {
+                                file_list_writer.send(FilePath::Break).await?;
+                                return Err(format_err!(
+                                    "Repl cannot already have `.replit-takeout-otbackup/` dir"
+                                ));
                             }
                             to_check_dirs.push(fpath)
                         }
@@ -355,8 +356,9 @@ pub async fn download_internal(
         download_locations.main,
         download_locations.staging_git,
         download_locations.git,
+        download_locations.ot,
         ts_offset,
-        String::from("malted@hackclub.com"),
+        email,
         is_git,
     )
     .await?;
@@ -582,6 +584,7 @@ pub async fn build_git(
     main_dir: String,
     staging_dir: String,
     git_dir: String,
+    ot_dir: String,
     global_ts: i64,
     email: String,
     git_already_exists: bool,
@@ -604,12 +607,13 @@ pub async fn build_git(
     }
 
     let git_dir2 = git_dir.clone();
+    let email2 = email.clone();
     let mut repo = tokio::task::spawn_blocking(move || -> Result<Repository> {
         let repo;
+        let author = Signature::new("Replit Takeout", &email2, &Time::new(global_ts, 0))?;
 
         if !git_already_exists {
             repo = git2::Repository::init(&git_dir2)?;
-            let author = Signature::new("Replit Takeout", &email, &Time::new(global_ts, 0))?;
 
             let mut index = repo.index()?;
             let oid = index.write_tree()?;
@@ -618,8 +622,6 @@ pub async fn build_git(
             repo.commit(Some("HEAD"), &author, &author, "Initial Commit", &tree, &[])?;
         } else {
             repo = git2::Repository::open(&git_dir2)?;
-
-            let author = Signature::new("Replit Takeout", &email, &Time::new(global_ts, 0))?;
 
             let mut index = repo.index()?;
             let oid = index.write_tree()?;
@@ -667,7 +669,9 @@ pub async fn build_git(
 
     timestamps.sort_unstable();
 
+    let mut last_snapshot = global_ts;
     for snapshot in timestamps {
+        last_snapshot = snapshot;
         let head = format!("{staging_dir}{snapshot}");
         let files = recursively_flatten_dir(head.clone()).await?;
         let head_prefix = head.clone() + "/";
@@ -685,6 +689,8 @@ pub async fn build_git(
             fs::rename(format!("{head}/{file}"), to).await?;
         }
 
+        let email2 = email.clone();
+
         repo = tokio::task::spawn_blocking(move || -> Result<Repository> {
             {
                 let mut index = repo.index()?;
@@ -696,11 +702,7 @@ pub async fn build_git(
                 let tree = repo.find_tree(oid)?;
 
                 // TODO: Put real email here
-                let author = Signature::new(
-                    "Replit Takeout",
-                    "malted@hackclub.com",
-                    &Time::new(snapshot, 0),
-                )?;
+                let author = Signature::new("Replit Takeout", &email2, &Time::new(snapshot, 0))?;
 
                 repo.commit(
                     Some("HEAD"),
@@ -718,6 +720,53 @@ pub async fn build_git(
     }
 
     fs::remove_dir_all(&staging_dir).await?;
+
+    let files = recursively_flatten_dir(main_dir.clone()).await?;
+
+    for file in files {
+        let file = file.strip_prefix(&main_dir).unwrap_or(&file);
+
+        let to_buf = format!("{git_dir}{file}");
+        let to = Path::new(&to_buf);
+
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+
+        fs::rename(format!("{main_dir}/{file}"), to).await?;
+    }
+
+    let email2 = email.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut index = repo.index()?;
+        index.add_all(["."], git2::IndexAddOption::DEFAULT, None)?;
+        index.write()?;
+
+        let oid = index.write_tree()?;
+        let parent_commit = repo.head()?.peel_to_commit()?;
+        let tree = repo.find_tree(oid)?;
+
+        // TODO: Put real email here
+        let author = Signature::new("Replit Takeout", &email2, &Time::new(last_snapshot, 0))?;
+
+        repo.commit(
+            Some("HEAD"),
+            &author,
+            &author,
+            "Final history snapshot",
+            &tree,
+            &[&parent_commit],
+        )?;
+
+        Ok(())
+    })
+    .await??;
+
+    fs::remove_dir_all(&main_dir).await?;
+
+    fs::rename(&git_dir, &main_dir).await?;
+
+    fs::rename(&ot_dir, format!("{main_dir}/.replit-takeout-otbackup/")).await?;
 
     Ok(())
 }
