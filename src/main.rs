@@ -1,13 +1,14 @@
+use anyhow::Result;
 use chrono::Utc;
 use log::{error, info};
 use replit_takeout::{
-    airtable,
+    airtable::{self, ProcessState},
     email::send_email,
     replit_graphql::{ProfileRepls, QuickUser},
 };
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::json;
-use std::env;
+use std::{env, time::Duration};
 use tokio;
 
 #[macro_use]
@@ -49,10 +50,11 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
     if !airtable::add_user(airtable::AirtableSyncedUser {
         id: user.id,
         username: at_user.username,
+        token,
         email: email.clone(),
         status: airtable::ProcessState::Registered,
-        r2_link: String::new(),
-        failed_ids: String::new(),
+        r2_link: String::from("https://example.com"),
+        failed_ids: String::from("none"),
     })
     .await
     {
@@ -71,4 +73,25 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
         "You're signed up, {}! We've emailed you at {} with details.",
         user.username, email
     )
+}
+
+async fn airtable_loop() -> Result<()> {
+    loop {
+        let user;
+        'mainloop: loop {
+            let records = airtable::get_records().await?;
+            for record in records {
+                if record.fields.status == ProcessState::Registered {
+                    user = record;
+                    break 'mainloop;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+
+        if let Err(err) = ProfileRepls::download(&user.fields.token, user.clone()).await {
+            error!("Error with `{}`'s download: {err:#?}", user.fields.username)
+            // FIXME: change state of user here....
+        }
+    }
 }

@@ -1,3 +1,4 @@
+use airtable_api::Record;
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
 use reqwest::{
@@ -5,6 +6,7 @@ use reqwest::{
     header::{self, HeaderMap},
     Client, Url,
 };
+use rocket::futures::FutureExt;
 use std::sync::Arc;
 use std::{error::Error, time::Duration};
 use time::OffsetDateTime;
@@ -12,7 +14,10 @@ use tokio::fs;
 
 use serde::Deserialize;
 
-use crate::crosisdownload::make_zip;
+use crate::{
+    airtable::{self, AirtableSyncedUser, ProcessState},
+    crosisdownload::make_zip,
+};
 
 static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
 
@@ -179,7 +184,13 @@ impl ProfileRepls {
         Ok((repls, next_page))
     }
 
-    pub async fn download(token: &String) -> Result<(), Box<dyn Error>> {
+    pub async fn download(
+        token: &String,
+        mut synced_user: Record<AirtableSyncedUser>,
+    ) -> Result<(), Box<dyn Error>> {
+        synced_user.fields.status = ProcessState::CollectingRepls;
+        airtable::update_records(vec![synced_user.clone()]).await?;
+
         let client = create_client(token, None)?;
 
         let current_user = QuickUser::fetch(token, Some(client.clone())).await?;
@@ -190,6 +201,7 @@ impl ProfileRepls {
         let (mut repls, mut cursor) = Self::fetch(token, current_user.id, None, None).await?;
         let mut i = 0;
         let mut j = 0;
+        let mut errored = vec![];
         loop {
             fs::create_dir_all("repls").await?;
 
@@ -239,11 +251,13 @@ impl ProfileRepls {
                         error!(
                             "Downloading {}::{} failed with error: {err:#?}",
                             repl.id, repl.slug
-                        )
+                        );
+                        errored.push(repl.id);
                     }
                     Ok(Ok(_)) => {
                         info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
                         j += 1;
+                        errored.push(repl.id);
                     }
                 }
 
@@ -265,6 +279,17 @@ impl ProfileRepls {
             }
         }
 
+        let did_error = !errored.is_empty();
+
+        if did_error {
+            synced_user.fields.status = ProcessState::Errored;
+            synced_user.fields.failed_ids = errored.join(",")
+        } else {
+            synced_user.fields.status = ProcessState::DownloadedRepls;
+        }
+
+        airtable::update_records(vec![synced_user.clone()]).await?;
+
         let path = format!("repls/{}", current_user.username);
         make_zip(path.clone(), format!("repls/{}.zip", current_user.username)).await?;
         fs::remove_dir_all(&path).await?;
@@ -273,6 +298,24 @@ impl ProfileRepls {
             "User repls have been zipped into repls/{}.zip",
             current_user.username
         );
+
+        /*
+        if !did_error {
+            synced_user.fields.status = ProcessState::WaitingInR2;
+        }
+        synced_user.fields.r2_link = ...; // FIXME: upload to r2
+
+        airtable::update_records(vec![synced_user.clone()]).await?;
+        */
+
+        /*
+        if did_error {
+            // FIXME: Send email
+            synced_user.fields.status = ProcessState::R2LinkEmailSent;
+
+            airtable::update_records(vec![synced_user]).await?;
+        }
+        */
 
         Ok(())
     }

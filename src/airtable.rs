@@ -1,4 +1,5 @@
 use airtable_api::{Airtable, Record};
+use anyhow::Result;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +42,7 @@ pub async fn add_user(user: AirtableSyncedUser) -> bool {
     AIRTABLE.create_records(TABLE, vec![record]).await.is_ok()
 }
 
-pub async fn get_records() {
+pub async fn get_records() -> Result<Vec<Record<AirtableSyncedUser>>> {
     // Get the current records from a table.
     let records: Vec<Record<AirtableSyncedUser>> = AIRTABLE
         .list_records(
@@ -57,22 +58,24 @@ pub async fn get_records() {
                 "Failed Repl IDs",
             ],
         )
-        .await
-        .unwrap();
+        .await?;
 
     // Iterate over the records.
-    for (i, record) in records.clone().iter().enumerate() {
-        println!("{} - {:#?}", i, record);
-    }
+    // for (i, record) in records.clone().iter().enumerate() {
+    //     println!("{} - {:#?}", i, record);
+    // }
+    Ok(records)
 }
 
-pub async fn update_records(records: Vec<Record<AirtableSyncedUser>>) {
-    AIRTABLE.update_records(TABLE, records).await.unwrap();
+pub async fn update_records(records: Vec<Record<AirtableSyncedUser>>) -> Result<()> {
+    AIRTABLE.update_records(TABLE, records).await?;
+
+    Ok(())
 }
 
 use std::fmt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ProcessState {
     #[serde(rename = "Registered")]
     Registered,
