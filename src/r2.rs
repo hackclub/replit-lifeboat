@@ -2,6 +2,7 @@ use awsregion::Region;
 use s3::creds::Credentials;
 use s3::error::S3Error;
 use s3::Bucket;
+use std::collections::HashMap;
 
 use once_cell::sync::Lazy;
 
@@ -42,9 +43,15 @@ pub async fn upload(file_path: String, contents: &[u8]) -> Result<(), S3Error> {
     Ok(())
 }
 
-pub async fn get(r2_path: String) -> Result<(), S3Error> {
-    let response_data = BUCKET.get_object(r2_path).await?;
-    println!("{response_data}");
+pub async fn get(r2_path: String, custom_filename: String) -> Result<String, S3Error> {
+    let mut custom_queries = HashMap::new();
+    custom_queries.insert(
+        "response-content-disposition".into(),
+        format!("attachment; filename=\"{custom_filename}\"").into(),
+    );
 
-    Ok(())
+    // Valid for a week (in seconds) (60 * 60 * 24 * 7)
+    BUCKET
+        .presign_get(r2_path, 604_800, Some(custom_queries))
+        .await
 }
