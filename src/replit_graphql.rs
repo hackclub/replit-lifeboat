@@ -196,7 +196,7 @@ impl ProfileRepls {
 
         let current_user = QuickUser::fetch(token, Some(client.clone())).await?;
 
-        fs::create_dir("repls").await?;
+        fs::create_dir_all("repls").await?;
         fs::create_dir(format!("repls/{}", current_user.username)).await?;
 
         let (mut repls, mut cursor) = Self::fetch(token, current_user.id, None, None).await?;
@@ -246,7 +246,8 @@ impl ProfileRepls {
                         error!(
                             "Downloading {}::{} timed out after 30 minutes",
                             repl.id, repl.slug
-                        )
+                        );
+                        errored.push(repl.id);
                     }
                     Ok(Err(err)) => {
                         error!(
@@ -258,7 +259,6 @@ impl ProfileRepls {
                     Ok(Ok(_)) => {
                         info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
                         j += 1;
-                        errored.push(repl.id);
                     }
                 }
 
@@ -335,7 +335,7 @@ impl ProfileRepls {
             send_email(
                 &synced_user.fields.email,
                 "Your Replit⠕ export is ready!".into(),
-                format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 30 days.", synced_user.fields.username, link),
+                format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 7 days.", synced_user.fields.username, link),
             )
             .await;
             synced_user.fields.status = ProcessState::R2LinkEmailSent;
