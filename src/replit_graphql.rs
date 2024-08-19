@@ -5,8 +5,9 @@ use reqwest::{
     header::{self, HeaderMap},
     Client, Url,
 };
-use std::error::Error;
 use std::sync::Arc;
+use std::{error::Error, time::Duration};
+use time::OffsetDateTime;
 use tokio::fs;
 
 use serde::Deserialize;
@@ -38,18 +39,18 @@ fn create_client_cookie_jar(token: &String) -> Arc<Jar> {
 }
 
 fn create_client(token: &String, client: Option<Client>) -> Result<Client, reqwest::Error> {
-    if client.is_some() {
-        return Ok(client.expect("a client to be inside the option"));
+    if let Some(client) = client {
+        return Ok(client);
     }
 
     Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
         .default_headers(create_client_headers())
-        .cookie_provider(create_client_cookie_jar(&token))
+        .cookie_provider(create_client_cookie_jar(token))
         .build()
 }
 
-#[derive(GraphQLQuery)]
+#[derive(GraphQLQuery, Clone)]
 #[graphql(
     schema_path = "src/graphql/schema 7.graphql",
     query_path = "src/graphql/quickuser-query.graphql",
@@ -123,16 +124,19 @@ pub struct ProfileRepls;
 impl ProfileRepls {
     pub async fn fetch(
         token: &String,
+        id: i64,
         client_opt: Option<Client>,
-    ) -> Result<Vec<profile_repls::ProfileReplsUserProfileReplsItems>, Box<dyn Error>> {
-        let client = create_client(&token, client_opt)?;
+        after: Option<String>,
+    ) -> Result<
+        (
+            Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
+            Option<String>,
+        ),
+        Box<dyn Error>,
+    > {
+        let client = create_client(token, client_opt)?;
 
-        let current_user = QuickUser::fetch(&token, Some(client.clone())).await?;
-
-        let repls_query = ProfileRepls::build_query(profile_repls::Variables {
-            id: current_user.id,
-            after: None,
-        });
+        let repls_query = ProfileRepls::build_query(profile_repls::Variables { id, after });
 
         let repls_data: String = client
             .post(REPLIT_GQL_URL)
@@ -149,39 +153,114 @@ impl ProfileRepls {
         let repls_data_result =
             serde_json::from_str::<Response<profile_repls::ResponseData>>(&repls_data);
 
-        if let Err(e) = repls_data_result {
-            error!("Failed to deserialize JSON: {}", e);
-            return Err(Box::new(e));
-        }
+        let repls_data_result_2 = match repls_data_result {
+            Ok(data) => data.data,
+            Err(e) => {
+                error!("Failed to deserialize JSON: {}", e);
+                return Err(Box::new(e));
+            }
+        };
 
-        let repls = repls_data_result?
-            .data
+        let next_page = repls_data_result_2
+            .as_ref()
+            .and_then(|data| {
+                data.user
+                    .as_ref()
+                    .map(|user| user.profile_repls.page_info.next_cursor.clone())
+            })
+            .ok_or("Page Info not found during download")?;
+
+        let repls = repls_data_result_2
             .and_then(|data| data.user.map(|user| user.profile_repls.items))
-            .ok_or_else(|| "Repls not found during download")?;
+            .ok_or("Repls not found during download")?;
 
-        Ok(repls)
+        Ok((repls, next_page))
     }
 
     pub async fn download(token: &String) -> Result<(), Box<dyn Error>> {
-        let repls = Self::fetch(token, None).await?;
+        let client = create_client(token, None)?;
 
-        fs::create_dir_all("repls").await?;
+        let current_user = QuickUser::fetch(token, Some(client.clone())).await?;
 
-        for repl in repls {
-            fs::create_dir(format!("repls/{}", repl.id)).await?;
+        fs::create_dir("repls").await?;
+        fs::create_dir(format!("repls/{}", current_user.username)).await?;
 
-            let location = format!("repls/{}/", &repl.id);
+        let (mut repls, mut cursor) = Self::fetch(token, current_user.id, None, None).await?;
+        let mut i = 0;
+        let mut j = 0;
+        loop {
+            fs::create_dir_all("repls").await?;
 
-            crate::crosisdownload::download(
-                create_client_headers(),
-                create_client_cookie_jar(&token),
-                repl.id.clone(),
-                &repl.slug,
-                location.clone(),
-            )
-            .await?;
+            for repl in repls {
+                let main_location = format!("repls/{}/{}/", current_user.username, repl.slug);
+                let git_location = format!("repls/{}/{}.git/", current_user.username, repl.slug);
+                let staging_git_location =
+                    format!("repls/{}/{}.gitstaging/", current_user.username, repl.slug);
+                let ot_location =
+                    format!("repls/{}/{}.otbackup/", current_user.username, repl.slug);
 
-            info!("Downloaded {} to {location}", repl.id)
+                fs::create_dir(&main_location).await?;
+                fs::create_dir(&git_location).await?;
+                fs::create_dir(&staging_git_location).await?;
+                fs::create_dir(&ot_location).await?;
+
+                let ts = OffsetDateTime::parse(
+                    &repl.time_created,
+                    &time::format_description::well_known::Rfc3339,
+                )?;
+
+                dbg!(ts);
+
+                let download_job = crate::crosisdownload::download(
+                    client.clone(),
+                    repl.id.clone(),
+                    &repl.slug,
+                    crate::crosisdownload::DownloadLocations {
+                        main: main_location.clone(),
+                        git: git_location,
+                        staging_git: staging_git_location,
+                        ot: ot_location,
+                    },
+                    ts.unix_timestamp(),
+                    current_user.email.clone(),
+                );
+
+                // At 30 minutes abandon the repl download
+                match tokio::time::timeout(Duration::from_secs(60 * 30), download_job).await {
+                    Err(_) => {
+                        error!(
+                            "Downloading {}::{} timed out after 30 minutes",
+                            repl.id, repl.slug
+                        )
+                    }
+                    Ok(Err(err)) => {
+                        error!(
+                            "Downloading {}::{} failed with error: {err:#?}",
+                            repl.id, repl.slug
+                        )
+                    }
+                    Ok(Ok(_)) => {
+                        info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
+                        j += 1;
+                    }
+                }
+
+                i += 1;
+
+                info!(
+                    "Download stats ({}): {j} correctly downloaded out of {i} total attempted downloads", current_user.username
+                );
+            }
+
+            if let Some(cursor_extracted) = cursor {
+                let (repls2, cursor2) =
+                    Self::fetch(token, current_user.id, None, Some(cursor_extracted)).await?;
+
+                repls = repls2;
+                cursor = cursor2;
+            } else {
+                break;
+            }
         }
 
         Ok(())

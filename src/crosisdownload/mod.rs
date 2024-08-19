@@ -11,7 +11,6 @@ use crosis::{
 use git2::{Repository, Signature, Time};
 use log::{debug, error, info, warn};
 use metadata::CookieJarConnectionMetadataFetcher;
-use reqwest::{cookie::Jar, header::HeaderMap};
 use ropey::Rope;
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -52,8 +51,7 @@ enum FilePath {
 }
 
 pub async fn download(
-    headers: HeaderMap,
-    jar: Arc<Jar>,
+    client: reqwest::Client,
     replid: String,
     replname: &str,
     download_locations: DownloadLocations,
@@ -63,11 +61,7 @@ pub async fn download(
     debug!("https://replit.com/replid/{}", &replid);
 
     let client = Client::new(Box::new(CookieJarConnectionMetadataFetcher {
-        client: reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
-        .default_headers(headers)
-        .cookie_provider(jar)
-        .build()?,
+        client,
         replid: replid.clone(),
     }));
 

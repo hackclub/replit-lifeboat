@@ -163,8 +163,9 @@ async fn main() -> Result<()> {
                 dbg!(ts);
 
                 let download_job = download(
-                    headers.clone(),
-                    jar.clone(),
+                    // headers.clone(),
+                    // jar.clone(),
+                    todo!(),
                     repl.id.clone(),
                     &repl.slug,
                     DownloadLocations {
