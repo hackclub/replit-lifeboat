@@ -9,55 +9,93 @@
         <meta name="viewport" content="width=device-width" />
         <meta name="generator" content={Astro.generator} />
         <title>Replit Takeout by Hack Club</title>
+        <link rel="stylesheet" href="https://css.hackclub.com/theme.css" />
+        <link rel="stylesheet" href="https://css.hackclub.com/fonts.css" />
     </head>
     <body class="w-full mt-16 mx-auto max-w-4xl">
-        <h1 class="text-center text-3xl flex flex-col gap-1">
-            <span class="muted">Hack Club & GitHub</span>
+        <main class="text-center" style="text-wrap: balance;">
+            <img src="/combo.png" width="200" />
+            <h1
+                class="text-3xl
+                flex
+                flex-col
+                gap-1
+                mb-8"
+            >
+            </h1>
+            <span
+                ><a href="https://hackclub.com" class="muted">Hack Club</a> &
+                <a href="https://github.com/education">GitHub Education</a
+                ></span
+            >
             <span class="text-xl opacity-60">presents</span>
             <span>Replit Takeout</span>
-        </h1>
+        </main>
 
-        <p>
-            On 15 Aug 2024, Replit announced they will be shutting down their
-            free plan. High schoolers around the world relied on Replit to In
-            response, GitHub are expanding their <a
-                href="https://github.com/codespaces">Codespaces</a
-            > offering, allowing for x hours per month of compute for all students,
+        <p class="text-center text-lg">
+            On 15 Aug 2024, <a href="https://replit.com">Replit</a> announced they
+            will be shutting down their free plan. High schoolers around the world
+            relied on Replit to code etc etc. In response, GitHub are expanding their
+            <a href="https://github.com/codespaces">Codespaces</a> offering, allowing
+            for x hours per month of compute for all students,
             <b>for free</b>. We're partnering with them to help you utilise it.
+        </p>
+
+        <p class="text-center text-lg">
+            To help you migrate your projects off Replit and onto GitHub
+            Codespaces, we've build this tool, which downloads all your repls.
         </p>
 
         <form
             id="signupForm"
             method="POST"
-            action="http://165.227.242.48/signup"
+            action="/api/signup"
+            class="card sunken flex flex-col items-center gap-4 mx-auto w-1/2"
         >
-            <label for="token">Token (Required):</label>
-            <input type="text" id="token" name="token" required />
-            <br /><br />
-            <label for="email">Email (optional):</label>
-            <input type="email" id="email" name="email" />
-            <br /><br />
-            <button type="submit">Sign Up</button>
+            <div>
+                <label class="block" for="token"
+                    >Replit <span class="text-base font-mono">connect.sid</span>
+                    token
+                    <span class="text-sm" style="color: var(--primary);"
+                        >(required)</span
+                    ></label
+                >
+                <input
+                    class="w-full"
+                    type="text"
+                    id="token"
+                    name="token"
+                    required
+                />
+            </div>
+
+            <div>
+                <label class="items-center" for="email"
+                    ><span
+                        >Email <span class="text-sm opacity-60">(optional)</span
+                        ></span
+                    >
+                    <span class="text-sm text-center"
+                        >Only fill this out if you want the export to go to a
+                        different email than the one associated with your Replit
+                        account.</span
+                    >
+                </label>
+                <input class="w-full" type="email" id="email" name="email" />
+            </div>
+            <div>
+                <button type="submit">Sign Up</button>
+            </div>
         </form>
-
-        <script>
-            document.getElementById("signupForm").onsubmit = function (event) {
-                var emailField = document.getElementById("email");
-                if (emailField.value.trim() === "") {
-                    emailField.disabled = true;
-                }
-            };
-        </script>
-
-        <h2>Why</h2>
-        4 days ago, Replit sent out this email, announcing the end of their free
-        plan.
-
-        <embed
-            src="/Replit\ Starter\ Plan\ Changes.pdf"
-            width="25%"
-            height="400"
-            type="application/pdf"
-        />
     </body>
+
+    <h2>Why</h2>
+    4 days ago, Replit sent out this email, announcing the end of their free plan.
+
+    <embed
+        src="/Replit\ Starter\ Plan\ Changes.pdf"
+        width="100%"
+        height="512"
+        type="application/pdf"
+    />
 </html>
