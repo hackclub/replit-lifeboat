@@ -54,3 +54,30 @@ pub async fn send_partial_success_email(
     )
     .await
 }
+
+#[derive(Template)]
+#[template(path = "all_success.html")]
+pub struct SuccessTemplate<'a> {
+    pub username: &'a str,
+    pub repl_count_total: usize,
+    pub link_export_download: &'a str,
+}
+pub async fn send_success_email(
+    to: &str,
+    username: &str,
+    repl_count_total: usize,
+    link_export_download: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    super::send_email(
+        to,
+        "Your Replit⠕ export has arrived!".to_string(),
+        SuccessTemplate {
+            username,
+            repl_count_total,
+            link_export_download,
+        }
+        .render()?,
+        ContentType::TEXT_HTML,
+    )
+    .await
+}

@@ -26,7 +26,8 @@ async fn rocket() -> _ {
         routes![
             test_test_email,
             greet_test_email,
-            partial_success_test_email
+            partial_success_test_email,
+            success_test_email
         ],
     )
 }
