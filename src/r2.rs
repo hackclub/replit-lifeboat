@@ -1,6 +1,7 @@
 use awsregion::Region;
 use s3::creds::Credentials;
 use s3::error::S3Error;
+use s3::serde_types::Part;
 use s3::Bucket;
 use std::collections::HashMap;
 
@@ -20,26 +21,50 @@ static BUCKET: Lazy<Bucket> = Lazy::new(|| {
     .with_path_style()
 });
 
-pub async fn upload(file_path: String, contents: &[u8]) -> Result<(), S3Error> {
-    let response_data = BUCKET.put_object(file_path, contents).await?;
-    assert_eq!(response_data.status_code(), 200);
+pub async fn upload(path: String, payload: &[u8]) -> Result<(), S3Error> {
+    let start_mu_up = BUCKET
+        .initiate_multipart_upload(&path, "application/octet-stream")
+        .await?;
 
-    // let response_data = bucket.get_object(file_path).await?;
+    let upload_id = start_mu_up.upload_id;
 
-    // let response_data = bucket
-    //     .get_object_range(s3_path, 100, Some(1000))
-    //     .await
-    //     .unwrap();
-    // assert_eq!(response_data.status_code(), 206);
-    // let (head_object_result, code) = bucket.head_object(s3_path).await?;
-    // assert_eq!(code, 200);
-    // assert_eq!(
-    //     head_object_result.content_type.unwrap_or_default(),
-    //     "application/octet-stream".to_owned()
-    // );
+    let mut etags = Vec::new();
+    let mut handles = vec![];
 
-    // let response_data = bucket.delete_object(s3_path).await?;
-    // assert_eq!(response_data.status_code(), 204);
+    // 100 MiB chunks
+    for (idx, chunk) in payload.chunks(100 * 1024 * 1024).enumerate() {
+        handles.push(BUCKET.put_multipart_chunk(
+            chunk.to_vec(),
+            &path,
+            (idx + 1) as u32,
+            &upload_id,
+            "application/octet-stream",
+        ));
+    }
+    let responses = futures::future::join_all(handles).await;
+
+    for response in responses {
+        if response.is_err() {
+            BUCKET.abort_upload(&path, &upload_id).await?;
+        }
+
+        etags.push(response?.etag);
+    }
+
+    let parts = etags
+        .clone()
+        .into_iter()
+        .enumerate()
+        .map(|(i, x)| Part {
+            etag: x,
+            part_number: i as u32 + 1,
+        })
+        .collect::<Vec<Part>>();
+
+    BUCKET
+        .complete_multipart_upload(&path, &upload_id, parts)
+        .await?;
+
     Ok(())
 }
 
@@ -50,8 +75,8 @@ pub async fn get(r2_path: String, custom_filename: String) -> Result<String, S3E
         format!("attachment; filename=\"{custom_filename}\""),
     );
 
-    // Valid for 24 hours
+    // Valid for 7 days
     BUCKET
-        .presign_get(r2_path, 86400, Some(custom_queries))
+        .presign_get(r2_path, 604_800, Some(custom_queries))
         .await
 }

@@ -79,37 +79,53 @@ use std::fmt;
 pub enum ProcessState {
     #[serde(rename = "Registered")]
     Registered,
-    #[serde(rename = "Enqueued")]
-    Enqueued,
     #[serde(rename = "Collecting repls")]
     CollectingRepls,
     #[serde(rename = "Collected")]
     Collected,
+
+    /// The repls have been uploaded to R2 but the email to the user with the link hasn't been sent yet.
     #[serde(rename = "Waiting in R2")]
     WaitingInR2,
+
+    /// The repls are ready to be downloaded and the email to the user with the R2 download link has been sent.
     #[serde(rename = "R2 link email sent")]
     R2LinkEmailSent,
+
+    /// The repls have been downloaded by the user!
     #[serde(rename = "Downloaded repls")]
     DownloadedRepls,
+
+    /// Some of the repls failed, but we're still giving them the successful ones.
+    #[serde(rename = "Partially downloaded repls")]
+    PartiallyDownloadedRepls,
+
+    /// Shit's fucked.
     #[serde(rename = "Errored")]
     Errored,
+
     // Errored the entire download function
     #[serde(rename = "ErroredMain")]
     ErroredMain,
+
+    /// Errored while trying to upload to R2
+    #[serde(rename = "ErroredR2")]
+    ErroredR2,
 }
 
 impl fmt::Display for ProcessState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
             ProcessState::Registered => "Registered",
-            ProcessState::Enqueued => "Enqueued",
             ProcessState::CollectingRepls => "Collecting repls",
             ProcessState::Collected => "Collected",
             ProcessState::WaitingInR2 => "Waiting in R2",
             ProcessState::R2LinkEmailSent => "R2 link email sent",
             ProcessState::DownloadedRepls => "Downloaded repls",
+            ProcessState::PartiallyDownloadedRepls => "Partially downloaded repls",
             ProcessState::Errored => "Errored",
             ProcessState::ErroredMain => "ErroredMain",
+            ProcessState::ErroredR2 => "ErroredR2",
         };
         write!(f, "{}", value)
     }

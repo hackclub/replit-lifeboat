@@ -1,33 +1,43 @@
 use anyhow::Result;
+use askama::Template;
 use replit_takeout::{
     airtable::{self, ProcessState},
-    email::send_email,
+    email::test_routes::*,
     replit_graphql::{ProfileRepls, QuickUser},
 };
+use rocket::response::content::RawHtml;
 use std::time::Duration;
 
 #[macro_use]
 extern crate rocket;
 
-mod crosisdownload;
-
 #[launch]
 async fn rocket() -> _ {
     env_logger::init();
-
+    dotenv::dotenv().ok();
     tokio::spawn(async {
         if let Err(err) = airtable_loop().await {
             error!("Airtable internal loop error, OH NO: {err}")
         }
     });
 
-    dotenv::dotenv().ok();
-    rocket::build().mount("/", routes![hello, signup])
+    rocket::build().mount("/", routes![hello, signup]).mount(
+        "/test-email",
+        routes![
+            test_test_email,
+            greet_test_email,
+            partial_success_test_email
+        ],
+    )
 }
 
 #[get("/")]
-fn hello() -> &'static str {
-    "I haven't slept in days; please don't break this - malted"
+fn hello() -> String {
+    format!(
+        "Running {} v{}\n",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 #[post("/signup?<token>&<custom_email>")]
@@ -45,7 +55,7 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
         }
     };
 
-    let email = custom_email.unwrap_or(user.email.clone());
+    let email = custom_email.unwrap_or(user.get_email_unsafe().to_string());
 
     let at_user = user.clone();
 
@@ -64,16 +74,14 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
         return format!("Sorry, {}! We couldn't add you to the queue for some reason. Please contact us at malted@hackclub.com!", user.username);
     }
 
-    send_email(
-        &email,
-        "Your Replit⠕ export is on its way!".into(),
-        format!("Heya {}!! Your Replit⠕ takeout 🥡 will be with you within a few days.\nPlease stand in line while our interns pack your order 📦.", user.username),
-    )
-    .await;
+    if let Err(err) = replit_takeout::email::emails::send_greet_email(&email, &user.username).await
+    {
+        error!("Couldn't send the greeting email to {:?}: {:?}", user, err);
+    }
 
     format!(
-        "You're signed up, {}! We've emailed you at {} with details.",
-        user.username, email
+        "You're signed up, {}! We've emailed you at {email} with details.",
+        user.username
     )
 }
 
@@ -99,12 +107,12 @@ async fn airtable_loop() -> Result<()> {
 
             // user.fields.failed_ids = errored.join(",");
 
-            send_email(
-                &user.fields.email,
-                "Your Replit⠕ export is slightly delayed :/".into(),
-                format!("Hey {}, We have run into an issue processing your Replit⠕ takeout 🥡.\nWe will manually review and confirm that all your data is included. If you don't hear back again within a few days email malted@hackclub.com. Sorry for the inconvenience.", user.fields.username),
-            )
-            .await;
+            // send_email(
+            //     &user.fields.email,
+            //     "Your Replit⠕ export is slightly delayed :/".into(),
+            //     format!("Hey {}, We have run into an issue processing your Replit⠕ takeout 🥡.\nWe will manually review and confirm that all your data is included. If you don't hear back again within a few days email malted@hackclub.com. Sorry for the inconvenience.", user.fields.username),
+            // )
+            // .await;
         }
     }
 }

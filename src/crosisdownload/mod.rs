@@ -25,21 +25,37 @@ use tokio::{
 use util::{do_ot, normalize_ts, recursively_flatten_dir};
 
 // Files to ignore for history and commits
-static NO_GO: [&str; 13] = [
-    "node_modules",
-    ".venv",
-    ".pythonlibs",
-    "target",
-    "vendor",
-    ".upm",
+static NO_GO: [&str; 28] = [
+    ".astro",
     ".cache",
     ".config",
+    ".deno",
+    ".DS_Store",
+    ".next",
+    ".pnp",
+    ".pnp.js",
+    ".pythonlibs",
+    ".svelte-kit",
+    ".venv",
+    ".vercel",
+    "__MACOSX",
+    "__pycache__",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "out",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "target",
+    "tmp",
+    "vendor",
+    "venv",
+    "yarn.lock",
     "zig-cache",
     "zig-out",
-    "venv",
-    ".deno",
-    "__MACOSX",
 ];
+
 const MAX_FILE_PARALLELISM: usize = 20;
 
 pub struct DownloadLocations {

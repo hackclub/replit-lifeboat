@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <title>{{ title }}</title>
+        {% block head %}{% endblock %}
+        <style>
+            html,
+            body {
+                margin: 0;
+                min-width: 100%;
+                min-height: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        {% block content %}
+        <p>Placeholder content</p>
+        {% endblock %}
+    </body>
+</html>

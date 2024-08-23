@@ -16,7 +16,7 @@ use serde::Deserialize;
 use crate::{
     airtable::{self, AirtableSyncedUser, ProcessState},
     crosisdownload::make_zip,
-    email::send_email,
+    email::emails::send_partial_success_email,
     r2,
 };
 
@@ -70,7 +70,7 @@ pub struct QuickUserQuery;
 pub struct QuickUser {
     pub id: i64,
     pub username: String,
-    pub email: String,
+    email: String,
 }
 
 impl QuickUser {
@@ -117,6 +117,11 @@ impl QuickUser {
             username,
             email,
         })
+    }
+
+    /// Remember users can pass custom emails
+    pub fn get_email_unsafe(&self) -> &str {
+        &self.email
     }
 }
 
@@ -282,27 +287,13 @@ impl ProfileRepls {
 
         let did_error = !errored.is_empty();
 
-        if did_error {
-            synced_user.fields.status = ProcessState::Errored;
-            synced_user.fields.failed_ids = errored.join(",");
-
-            send_email(
-                &synced_user.fields.email,
-                "Your Replit⠕ export is slightly delayed :/".into(),
-                format!("Hey {}, We have run into an issue processing your Replit⠕ takeout 🥡.\nWe will manually review and confirm that all your data is included. If you don't hear back again within a few days email malted@hackclub.com. Sorry for the inconvenience.", synced_user.fields.username),
-            )
-            .await;
-        } else {
-            synced_user.fields.status = ProcessState::DownloadedRepls;
-        }
-
-        airtable::update_records(vec![synced_user.clone()]).await?;
+        let success_count = i - errored.len();
 
         let path = format!("repls/{}", current_user.username);
         make_zip(path.clone(), format!("repls/{}.zip", current_user.username)).await?;
         fs::remove_dir_all(&path).await?;
 
-        warn!(
+        info!(
             "User repls have been zipped into repls/{}.zip",
             current_user.username
         );
@@ -311,33 +302,78 @@ impl ProfileRepls {
             synced_user.fields.status = ProcessState::WaitingInR2;
         }
 
-        let zip_path = format!("repls/{}.zip", current_user.username);
+        let zip_path = format!("repls/{}.zip", current_user.username); // Local
+        let upload_path = format!("export/{}.zip", current_user.username); // Remote
 
-        r2::upload(
-            format!("export/{}.zip", current_user.username),
-            &fs::read(&zip_path).await?,
-        )
-        .await?;
-
+        let upload_result = r2::upload(upload_path.clone(), &fs::read(&zip_path).await?).await;
         fs::remove_file(&zip_path).await?;
 
-        let link = r2::get(
-            format!("export/{}.zip", current_user.username),
-            format!("{}.zip", current_user.username),
-        )
-        .await?;
+        if let Err(upload_err) = upload_result {
+            synced_user.fields.status = ProcessState::ErroredR2;
+            airtable::update_records(vec![synced_user.clone()]).await?;
+            error!("Failed to upload {upload_path} to R2");
+            return Err(Box::new(upload_err));
+        }
+
+        let link = r2::get(upload_path, format!("{}.zip", current_user.username)).await?;
 
         synced_user.fields.r2_link = link.clone();
-
         airtable::update_records(vec![synced_user.clone()]).await?;
 
-        if !did_error {
-            send_email(
+        // Hey, if even one repl was downloaded let's give it to them.
+        if success_count > 0 {
+            if let Err(err) = send_partial_success_email(
                 &synced_user.fields.email,
-                "Your Replit⠕ export is ready!".into(),
-                format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 24 hours.", synced_user.fields.username, link),
+                &synced_user.fields.username,
+                i,
+                errored,
+                &link,
             )
-            .await;
+            .await
+            {
+                error!(
+                    "Failed to send partial success email to {}: {:?}",
+                    &synced_user.fields.email, err
+                )
+            }
+            // send_email(
+            //     &synced_user.fields.email,
+            //     "Your Replit⠕ export is (mostly) here!".into(),
+            //     format!(
+            //         "Hey {}, we successfully exported {success_count} of your {i} repls.
+            //         Here's the link to download the successfully exported repls:
+
+            //         {link}
+
+            //         Here are the repls that Replit didn't let us download fully:
+            //         {errored_repl_links}",
+            //         synced_user.fields.username,
+            //     ),
+            // )
+            // .await;
+        } else {
+            // Shit's fucked.
+            synced_user.fields.status = ProcessState::Errored;
+            synced_user.fields.failed_ids = errored.join(",");
+
+            // send_email(
+            //         &synced_user.fields.email,
+            //         "Your Replit⠕ export is delayed :/".into(),
+            //         format!("Hey {}, We have run into an issue processing your Replit⠕ takeout 🥡.\nWe will manually review and confirm that all your data is included. If you don't hear back again within a few days email malted@hackclub.com. Sorry for the inconvenience.", synced_user.fields.username),
+            //     )
+            //     .await;
+
+            synced_user.fields.status = ProcessState::DownloadedRepls;
+            airtable::update_records(vec![synced_user.clone()]).await?;
+        }
+
+        if !did_error {
+            // send_email(
+            //     &synced_user.fields.email,
+            //     "Your Replit⠕ export is ready!".into(),
+            //     format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 7 days.", synced_user.fields.username, link),
+            // )
+            // .await;
             synced_user.fields.status = ProcessState::R2LinkEmailSent;
 
             airtable::update_records(vec![synced_user]).await?;
