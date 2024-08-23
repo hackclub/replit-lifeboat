@@ -16,7 +16,7 @@ use serde::Deserialize;
 use crate::{
     airtable::{self, AirtableSyncedUser, ProcessState},
     crosisdownload::make_zip,
-    email::emails::send_partial_success_email,
+    email::emails::{send_partial_success_email, send_success_email},
     r2,
 };
 
@@ -285,8 +285,6 @@ impl ProfileRepls {
             }
         }
 
-        let did_error = !errored.is_empty();
-
         let success_count = i - errored.len();
 
         let path = format!("repls/{}", current_user.username);
@@ -298,15 +296,13 @@ impl ProfileRepls {
             current_user.username
         );
 
-        if !did_error {
-            synced_user.fields.status = ProcessState::WaitingInR2;
-        }
-
         let zip_path = format!("repls/{}.zip", current_user.username); // Local
         let upload_path = format!("export/{}.zip", current_user.username); // Remote
 
         let upload_result = r2::upload(upload_path.clone(), &fs::read(&zip_path).await?).await;
         fs::remove_file(&zip_path).await?;
+        synced_user.fields.status = ProcessState::WaitingInR2;
+        airtable::update_records(vec![synced_user.clone()]).await?;
 
         if let Err(upload_err) = upload_result {
             synced_user.fields.status = ProcessState::ErroredR2;
@@ -334,50 +330,52 @@ impl ProfileRepls {
                 error!(
                     "Failed to send partial success email to {}: {:?}",
                     &synced_user.fields.email, err
-                )
+                );
             }
-            // send_email(
-            //     &synced_user.fields.email,
-            //     "Your Replit⠕ export is (mostly) here!".into(),
-            //     format!(
-            //         "Hey {}, we successfully exported {success_count} of your {i} repls.
-            //         Here's the link to download the successfully exported repls:
-
-            //         {link}
-
-            //         Here are the repls that Replit didn't let us download fully:
-            //         {errored_repl_links}",
-            //         synced_user.fields.username,
-            //     ),
-            // )
-            // .await;
         } else {
             // Shit's fucked.
             synced_user.fields.status = ProcessState::Errored;
             synced_user.fields.failed_ids = errored.join(",");
+            airtable::update_records(vec![synced_user.clone()]).await?;
 
-            // send_email(
-            //         &synced_user.fields.email,
-            //         "Your Replit⠕ export is delayed :/".into(),
-            //         format!("Hey {}, We have run into an issue processing your Replit⠕ takeout 🥡.\nWe will manually review and confirm that all your data is included. If you don't hear back again within a few days email malted@hackclub.com. Sorry for the inconvenience.", synced_user.fields.username),
-            //     )
-            //     .await;
+            if let Err(err) = crate::email::send_email(
+                &synced_user.fields.email,
+                "Your Replit⠕ export failed".into(),
+                format!(
+                    "Hey {}, We have run into an issue processing your Replit⠕ takeout 🥡.
+We've been notified, and will fix this! We'll get back to you about this.",
+                    synced_user.fields.username
+                ),
+                lettre::message::header::ContentType::TEXT_PLAIN,
+            )
+            .await
+            {
+                error!(
+                    "Couldn't send the failure email to {}: {:?}",
+                    synced_user.fields.email, err
+                );
+            }
 
             synced_user.fields.status = ProcessState::DownloadedRepls;
             airtable::update_records(vec![synced_user.clone()]).await?;
         }
 
-        if !did_error {
-            // send_email(
-            //     &synced_user.fields.email,
-            //     "Your Replit⠕ export is ready!".into(),
-            //     format!("Heya {}!! Your Replit⠕ takeout 🥡 is ready to download.\n\nA zip file with all of your repls can be found at {}. This link will be valid for 7 days.", synced_user.fields.username, link),
-            // )
-            // .await;
-            synced_user.fields.status = ProcessState::R2LinkEmailSent;
-
-            airtable::update_records(vec![synced_user]).await?;
+        if let Err(err) = send_success_email(
+            &synced_user.fields.email,
+            &synced_user.fields.username,
+            i,
+            &link,
+        )
+        .await
+        {
+            error!(
+                "Couldn't send the success email to {}: {:?}",
+                synced_user.fields.email, err
+            );
         }
+
+        synced_user.fields.status = ProcessState::R2LinkEmailSent;
+        airtable::update_records(vec![synced_user]).await?;
 
         Ok(())
     }

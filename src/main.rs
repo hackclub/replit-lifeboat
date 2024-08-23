@@ -1,11 +1,9 @@
 use anyhow::Result;
-use askama::Template;
 use replit_takeout::{
     airtable::{self, ProcessState},
     email::test_routes::*,
     replit_graphql::{ProfileRepls, QuickUser},
 };
-use rocket::response::content::RawHtml;
 use std::time::Duration;
 
 #[macro_use]
