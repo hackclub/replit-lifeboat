@@ -1,4 +1,5 @@
 use airtable_api::Record;
+use anyhow::{format_err, Result};
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
 use reqwest::{
@@ -6,12 +7,11 @@ use reqwest::{
     header::{self, HeaderMap},
     Client, Url,
 };
-use std::sync::Arc;
-use std::{error::Error, time::Duration};
+use serde::Deserialize;
+use std::time::Duration;
+use std::{pin::pin, sync::Arc};
 use time::OffsetDateTime;
 use tokio::fs;
-
-use serde::Deserialize;
 
 use crate::{
     airtable::{self, AirtableSyncedUser, ProcessState},
@@ -74,17 +74,15 @@ pub struct QuickUser {
 }
 
 impl QuickUser {
-    pub async fn fetch(token: &String, client_opt: Option<Client>) -> Result<Self, String> {
-        let client = create_client(token, client_opt).map_err(|e| e.to_string())?;
+    pub async fn fetch(token: &String, client_opt: Option<Client>) -> Result<Self> {
+        let client = create_client(token, client_opt)?;
         let user_data: String = client
             .post(REPLIT_GQL_URL)
             .json(&QuickUserQuery::build_query(quick_user_query::Variables {}))
             .send()
-            .await
-            .map_err(|e| e.to_string())?
+            .await?
             .text()
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
 
         debug!(
             "{}:{} Raw text quick user data: {user_data}",
@@ -92,25 +90,25 @@ impl QuickUser {
             std::column!()
         );
 
-        let user_data: Response<quick_user_query::ResponseData> =
-            serde_json::from_str(&user_data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let user_data: Response<quick_user_query::ResponseData> = serde_json::from_str(&user_data)
+            .map_err(|e| format_err!("Failed to parse JSON: {}", e))?;
 
         let user_data = user_data.data;
         let id = user_data
             .clone()
             .and_then(|d| d.current_user)
             .map(|u| u.id)
-            .ok_or_else(|| "Missing user id".to_string())?;
+            .ok_or(format_err!("Missing user id"))?;
         let username = user_data
             .clone()
             .and_then(|d| d.current_user)
             .map(|u| u.username)
-            .ok_or_else(|| "Missing username".to_string())?;
+            .ok_or(format_err!("Missing username"))?;
         let email = user_data
             .clone()
             .and_then(|d| d.current_user)
             .map(|u| u.email)
-            .ok_or_else(|| "Missing email".to_string())?;
+            .ok_or(format_err!("Missing email"))?;
 
         Ok(Self {
             id,
@@ -140,13 +138,10 @@ impl ProfileRepls {
         id: i64,
         client_opt: Option<Client>,
         after: Option<String>,
-    ) -> Result<
-        (
-            Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
-            Option<String>,
-        ),
-        Box<dyn Error + Sync + Send>,
-    > {
+    ) -> Result<(
+        Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
+        Option<String>,
+    )> {
         let client = create_client(token, client_opt)?;
 
         let repls_query = ProfileRepls::build_query(profile_repls::Variables { id, after });
@@ -170,7 +165,7 @@ impl ProfileRepls {
             Ok(data) => data.data,
             Err(e) => {
                 error!("Failed to deserialize JSON: {}", e);
-                return Err(Box::new(e));
+                return Err(e.into());
             }
         };
 
@@ -181,11 +176,11 @@ impl ProfileRepls {
                     .as_ref()
                     .map(|user| user.profile_repls.page_info.next_cursor.clone())
             })
-            .ok_or("Page Info not found during download")?;
+            .ok_or(format_err!("Page Info not found during download"))?;
 
         let repls = repls_data_result_2
             .and_then(|data| data.user.map(|user| user.profile_repls.items))
-            .ok_or("Repls not found during download")?;
+            .ok_or(format_err!("Repls not found during download"))?;
 
         Ok((repls, next_page))
     }
@@ -193,7 +188,7 @@ impl ProfileRepls {
     pub async fn download(
         token: &String,
         mut synced_user: Record<AirtableSyncedUser>,
-    ) -> Result<(), Box<dyn Error + Sync + Send>> {
+    ) -> Result<()> {
         synced_user.fields.status = ProcessState::CollectingRepls;
         airtable::update_records(vec![synced_user.clone()]).await?;
 
@@ -299,7 +294,11 @@ impl ProfileRepls {
         let zip_path = format!("repls/{}.zip", current_user.username); // Local
         let upload_path = format!("export/{}.zip", current_user.username); // Remote
 
-        let upload_result = r2::upload(upload_path.clone(), &fs::read(&zip_path).await?).await;
+        let upload_result = r2::upload(
+            upload_path.clone(),
+            pin!(&mut fs::File::open(&zip_path).await?),
+        )
+        .await;
         fs::remove_file(&zip_path).await?;
         synced_user.fields.status = ProcessState::WaitingInR2;
         airtable::update_records(vec![synced_user.clone()]).await?;
@@ -308,7 +307,7 @@ impl ProfileRepls {
             synced_user.fields.status = ProcessState::ErroredR2;
             airtable::update_records(vec![synced_user.clone()]).await?;
             error!("Failed to upload {upload_path} to R2");
-            return Err(Box::new(upload_err));
+            return Err(upload_err);
         }
 
         let link = r2::get(upload_path, format!("{}.zip", current_user.username)).await?;
