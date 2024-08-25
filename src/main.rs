@@ -21,15 +21,17 @@ async fn rocket() -> _ {
         }
     });
 
-    rocket::build().mount("/", routes![hello, signup]).mount(
-        "/test-email",
-        routes![
-            test_test_email,
-            greet_test_email,
-            partial_success_test_email,
-            success_test_email
-        ],
-    )
+    rocket::build()
+        .mount("/", routes![hello, signup, get_progress])
+        .mount(
+            "/test-email",
+            routes![
+                test_test_email,
+                greet_test_email,
+                partial_success_test_email,
+                success_test_email
+            ],
+        )
 }
 
 #[get("/")]
