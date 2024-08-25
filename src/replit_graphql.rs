@@ -205,12 +205,12 @@ impl ProfileRepls {
         fs::create_dir(format!("repls/{}", current_user.username)).await?;
 
         let (mut repls, mut cursor) = Self::fetch(token, current_user.id, None, None).await?;
+        let repl_count = repls.len();
+
         let mut i = 0;
         let mut j = 0;
         let mut errored = vec![];
         loop {
-            fs::create_dir_all("repls").await?;
-
             for repl in repls {
                 let main_location = format!("repls/{}/{}/", current_user.username, repl.slug);
                 let git_location = format!("repls/{}/{}.git/", current_user.username, repl.slug);
@@ -228,8 +228,6 @@ impl ProfileRepls {
                     &repl.time_created,
                     &time::format_description::well_known::Rfc3339,
                 )?;
-
-                dbg!(ts);
 
                 let download_job = crate::crosisdownload::download(
                     client.clone(),
@@ -272,6 +270,24 @@ impl ProfileRepls {
                 info!(
                     "Download stats ({}): {j} correctly downloaded out of {i} total attempted downloads", current_user.username
                 );
+
+                // Report the user's progress.
+                let task_usr = current_user.clone();
+                tokio::spawn(async move {
+                    if let Err(err) = r2::upload(
+                        format!("progress/{}", task_usr.id),
+                        format!("{}/{repl_count}", i + 1).as_bytes(),
+                    )
+                    .await
+                    {
+                        error!(
+                            "Couldn't upload {}'s progress report ({}/{repl_count}) to R2: {:?}",
+                            task_usr.username,
+                            i + 1,
+                            err
+                        );
+                    }
+                });
             }
 
             if let Some(cursor_extracted) = cursor {

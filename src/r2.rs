@@ -1,9 +1,12 @@
 use awsregion::Region;
 use s3::creds::Credentials;
 use s3::error::S3Error;
+use s3::request::ResponseData;
 use s3::serde_types::Part;
 use s3::Bucket;
 use std::collections::HashMap;
+use std::error::Error;
+use std::str::Utf8Error;
 
 use once_cell::sync::Lazy;
 
@@ -66,6 +69,14 @@ pub async fn upload(path: String, payload: &[u8]) -> Result<(), S3Error> {
         .await?;
 
     Ok(())
+}
+
+pub async fn get_file_contents<'a>(path: String) -> Option<Vec<u8>> {
+    BUCKET
+        .get_object(path)
+        .await
+        .map(|x| Some(x.to_vec()))
+        .unwrap_or(None)
 }
 
 pub async fn get(r2_path: String, custom_filename: String) -> Result<String, S3Error> {

@@ -2,8 +2,10 @@ use anyhow::Result;
 use replit_takeout::{
     airtable::{self, ProcessState},
     email::test_routes::*,
+    r2::{self, get_file_contents},
     replit_graphql::{ProfileRepls, QuickUser},
 };
+use rocket::http::Status;
 use std::time::Duration;
 
 #[macro_use]
@@ -82,6 +84,28 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
         "You're signed up, {}! We've emailed you at {email} with details.",
         user.username
     )
+}
+
+#[get("/progress?<token>")]
+async fn get_progress(token: String) -> Option<String> {
+    let id = match QuickUser::fetch(&token, None).await {
+        Ok(user) => user,
+        Err(e) => {
+            log::error!(
+                "Couldn't get the replit user info for token {}: {}",
+                token,
+                e
+            );
+            return None;
+        }
+    }
+    .id;
+
+    if let Some(bytes) = get_file_contents(format!("progress/{id}")).await {
+        return std::str::from_utf8(&bytes).map(|s| s.to_string()).ok();
+    }
+
+    None
 }
 
 async fn airtable_loop() -> Result<()> {
