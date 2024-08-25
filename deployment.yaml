@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: replit-takeout
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: replit-takeout
+  template:
+    metadata:
+      labels:
+        app: replit-takeout
+    spec:
+      containers:
+        - name: replit-takeout
+          image: hackclub/replit-takeout:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: RUST_LOG
+              value: "trace"
+            - name: ROCKET_ADDRESS
+              value: "0.0.0.0"
+            - name: GMAIL_SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mailer-user
+                  key: GMAIL_SMTP_USER
+            - name: GMAIL_SMTP_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: mailer-user
+                  key: GMAIL_SMTP_PASS
+            - name: AIRTABLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: airtable
+                  key: AIRTABLE_API_KEY
+            - name: AIRTABLE_BASE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: airtable
+                  key: AIRTABLE_BASE_ID
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: storage-bucket
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: storage-bucket
+                  key: AWS_ACCESS_SECRET
+            - name: R2_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: storage-bucket
+                  key: R2_ENDPOINT
+
