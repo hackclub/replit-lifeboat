@@ -207,6 +207,8 @@ impl ProfileRepls {
         let (mut repls, mut cursor) = Self::fetch(token, current_user.id, None, None).await?;
         let repl_count = repls.len();
 
+        report_progress(&current_user, 0, repl_count); // Report the user's progress.
+
         let mut i = 0;
         let mut j = 0;
         let mut errored = vec![];
@@ -271,23 +273,7 @@ impl ProfileRepls {
                     "Download stats ({}): {j} correctly downloaded out of {i} total attempted downloads", current_user.username
                 );
 
-                // Report the user's progress.
-                let task_usr = current_user.clone();
-                tokio::spawn(async move {
-                    if let Err(err) = r2::upload(
-                        format!("progress/{}", task_usr.id),
-                        format!("{}/{repl_count}", i + 1).as_bytes(),
-                    )
-                    .await
-                    {
-                        error!(
-                            "Couldn't upload {}'s progress report ({}/{repl_count}) to R2: {:?}",
-                            task_usr.username,
-                            i + 1,
-                            err
-                        );
-                    }
-                });
+                report_progress(&current_user, i, repl_count);
             }
 
             if let Some(cursor_extracted) = cursor {
@@ -404,3 +390,20 @@ We've been notified, and will fix this! We'll get back to you about this.",
     response_derives = "Debug"
 )]
 pub struct ReplsDashboardReplFolderList;
+
+fn report_progress(user: &QuickUser, elapsed: usize, repl_count: usize) {
+    let task_usr = user.clone();
+    tokio::spawn(async move {
+        if let Err(err) = r2::upload(
+            format!("progress/{}", task_usr.id),
+            format!("{elapsed}/{repl_count}").as_bytes(),
+        )
+        .await
+        {
+            error!(
+                "Couldn't upload {}'s progress report ({elapsed}/{repl_count}) to R2: {:?}",
+                task_usr.username, err
+            );
+        }
+    });
+}

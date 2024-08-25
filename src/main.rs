@@ -1,15 +1,17 @@
+#[macro_use]
+extern crate rocket;
 use anyhow::Result;
 use replit_takeout::{
     airtable::{self, ProcessState},
     email::test_routes::*,
-    r2::{self, get_file_contents},
     replit_graphql::{ProfileRepls, QuickUser},
 };
-use rocket::http::Status;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
+mod r2;
 
-#[macro_use]
-extern crate rocket;
+struct State {
+    token_to_id_cache: tokio::sync::RwLock<HashMap<String, i64>>, // <token, id>
+}
 
 #[launch]
 async fn rocket() -> _ {
@@ -32,10 +34,15 @@ async fn rocket() -> _ {
                 success_test_email
             ],
         )
+        .manage(State {
+            token_to_id_cache: tokio::sync::RwLock::new(HashMap::new()),
+        })
 }
 
 #[get("/")]
 fn hello() -> String {
+    info!("Hit root route");
+
     format!(
         "Running {} v{}\n",
         env!("CARGO_PKG_NAME"),
@@ -89,21 +96,32 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
 }
 
 #[get("/progress?<token>")]
-async fn get_progress(token: String) -> Option<String> {
-    let id = match QuickUser::fetch(&token, None).await {
-        Ok(user) => user,
-        Err(e) => {
-            log::error!(
-                "Couldn't get the replit user info for token {}: {}",
-                token,
-                e
-            );
-            return None;
-        }
-    }
-    .id;
+async fn get_progress(token: String, state: &rocket::State<State>) -> Option<String> {
+    let mut should_insert = false;
 
-    if let Some(bytes) = get_file_contents(format!("progress/{id}")).await {
+    let id = if let Some(id) = state.token_to_id_cache.read().await.get(&token) {
+        *id
+    } else {
+        match QuickUser::fetch(&token, None).await {
+            Ok(user) => {
+                should_insert = true;
+                user.id
+            }
+            Err(err) => {
+                log::error!(
+                    "Couldn't get the replit user info for token {token}: {:?}",
+                    err
+                );
+                return None;
+            }
+        }
+    };
+
+    if should_insert {
+        state.token_to_id_cache.write().await.insert(token, id);
+    }
+
+    if let Some(bytes) = r2::get_file_contents(format!("progress/{id}")).await {
         return std::str::from_utf8(&bytes).map(|s| s.to_string()).ok();
     }
 
@@ -114,6 +132,7 @@ async fn airtable_loop() -> Result<()> {
     loop {
         let mut user;
         'mainloop: loop {
+            trace!("Getting airtable records");
             let records = airtable::get_records().await?;
             for record in records {
                 if record.fields.status == ProcessState::Registered {
@@ -121,7 +140,7 @@ async fn airtable_loop() -> Result<()> {
                     break 'mainloop;
                 }
             }
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
         if let Err(err) = ProfileRepls::download(&user.fields.token, user.clone()).await {

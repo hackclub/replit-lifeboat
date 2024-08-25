@@ -11,7 +11,7 @@ use crosis::{
     Channel, Client,
 };
 use git2::{Repository, Signature, Time};
-use log::{debug, error, info, warn};
+use log::{debug, error, trace, warn};
 use metadata::CookieJarConnectionMetadataFetcher;
 use ropey::Rope;
 use serde::Serialize;
@@ -108,7 +108,7 @@ async fn download_internal(
     // Will take up to a max of 2 minutes until it fails if ratelimited
     let mut chan0 = client.connect_max_retries_and_backoff(5, 3000, 2).await?;
 
-    info!("Connected to {replid}::{replname}");
+    trace!("Connected to {replid}::{replname}");
     {
         let (connected_send, connected_read) = kanal::oneshot_async();
         let mut connected_send = Some(connected_send);
@@ -138,7 +138,7 @@ async fn download_internal(
     }
 
     let gcsfiles_scan = client.open("gcsfiles".into(), None, None).await?;
-    info!("Obtained 1st gcsfiles for {replid}::{replname}");
+    trace!("Obtained 1st gcsfiles for {replid}::{replname}");
 
     let (file_list_writer, file_list_reader) = kanal::unbounded_async();
     let (file_list_writer2, file_list_reader2) = kanal::unbounded_async();
@@ -235,14 +235,14 @@ async fn download_internal(
 
         file_list_writer.send(FilePath::Break).await?;
 
-        // info!("Obtained file list for {replid}::{replname}");
+        // trace!("Obtained file list for {replid}::{replname}");
 
         Ok((file_list_writer, is_git))
     });
 
     let gcsfiles_download = client.open("gcsfiles".into(), None, None).await?;
     let file_list_reader3 = file_list_reader2.clone();
-    info!("Obtained 2nd gcsfiles for {replid}::{replname}");
+    trace!("Obtained 2nd gcsfiles for {replid}::{replname}");
     // Sadly have to clone if want main file downloads in parallel with ot downloads
     // Should test / benchmark if time is available.
     let main_download = download_locations.main.clone();
@@ -272,7 +272,7 @@ async fn download_internal(
 
             fs::write(download_path, content).await?;
 
-            info!("Downloaded {path}");
+            trace!("Downloaded {path}");
         }
 
         file_list_reader2.close();
@@ -281,7 +281,7 @@ async fn download_internal(
     });
 
     let gcsfiles_download = client.open("gcsfiles".into(), None, None).await?;
-    info!("Obtained 3rd gcsfiles for {replid}::{replname}");
+    trace!("Obtained 3rd gcsfiles for {replid}::{replname}");
     // Sadly have to clone if want main file downloads in parallel with ot downloads
     // Should test / benchmark if time is available.
     let main_download = download_locations.main.clone();
@@ -311,7 +311,7 @@ async fn download_internal(
 
             fs::write(download_path, content).await?;
 
-            info!("Downloaded {path}");
+            trace!("Downloaded {path}");
         }
 
         Ok(())
@@ -357,7 +357,7 @@ async fn download_internal(
 
     let (writer, is_git) = file_finder_handle.await??;
 
-    info!("Read file history for {replid}::{replname}");
+    trace!("Read file history for {replid}::{replname}");
 
     handle.await??;
     handle2.await??;
@@ -387,7 +387,7 @@ async fn download_internal(
         }
     };
 
-    info!("Downloaded final file contents for {replid}::{replname}");
+    trace!("Downloaded final file contents for {replid}::{replname}");
     writer.close();
 
     // if !is_git.load(atomic::Ordering::Relaxed) {
@@ -403,7 +403,7 @@ async fn download_internal(
     )
     .await?;
 
-    info!("Built git repo from history snapshots for {replid}::{replname}");
+    trace!("Built git repo from history snapshots for {replid}::{replname}");
     // } else {
     //     fs::remove_dir_all(download_locations.staging_git).await?;
     //     fs::remove_dir_all(download_locations.git).await?;
@@ -421,7 +421,7 @@ async fn download_internal(
     // .await?;
     client.destroy().await?;
 
-    info!("Disconnected from {replid}::{replname}");
+    trace!("Disconnected from {replid}::{replname}");
 
     Ok(())
 }
@@ -477,13 +477,13 @@ async fn handle_file(
             fs::create_dir_all(parent).await?;
         }
 
-        info!("{filename} has no history...");
+        trace!("{filename} has no history...");
         fs::write(path, "[]").await?;
 
         return Ok(());
     }
 
-    info!("{filename} is on version #{version}");
+    trace!("{filename} is on version #{version}");
 
     let res = channel
         .request(Command {
@@ -613,7 +613,7 @@ async fn handle_file(
 
     fs::write(path, serde_json::to_string(&new_history)?).await?;
 
-    info!("Downloaded history for {filename}");
+    trace!("Downloaded history for {filename}");
 
     drop(permit);
 
