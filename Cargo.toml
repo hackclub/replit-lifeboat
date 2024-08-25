@@ -9,7 +9,6 @@ authors = ["Ben Dixon <malted@malted.dev>"]
 [dependencies]
 anyhow = "1.0.86"
 async-trait = "0.1.81"
-# console-subscriber = "0.4.0"
 crc32fast = "1.4.2"
 crosis = { git = "https://github.com/PotentialStyx/crosis-rust.git", version = "0.3.3", default-features = false, features = ["chan_buf", "serde", "notif_on_close"]  }
 airtable-api = "0.1.36"
@@ -31,7 +30,6 @@ time = "0.3.36"
 tokio = { version = "1.39.3", features = ["fs", "macros", "net", "rt-multi-thread"] }
 openssl = { version = "0.10.59", features = ["vendored"] }
 chrono = "0.4.38"
-
 async_zip = { version = "0.0.17", features = ["tokio", "tokio-fs", "deflate", "async-compression"] }
 async-compression = { version = "0.4.12" }
 aws-region = "0.25.4"
