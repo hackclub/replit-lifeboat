@@ -16,8 +16,8 @@ COPY ./Cargo.toml ./Cargo.toml
 RUN cargo build --release
 RUN rm src/*.rs
 
-# Copy the source code
 COPY ./src ./src
+COPY ./templates ./templates
 
 # Build for release
 RUN rm ./target/release/deps/replit_takeout*
