@@ -7,10 +7,10 @@ metadata:
 spec:
   tls:
     - hosts:
-        - takeout.malted.dev
+        - takeout.hackclub.com
       secretName: replit-takeout-tls
   rules:
-    - host: takeout.malted.dev
+    - host: takeout.hackclub.com
       http:
         paths:
           - path: /
