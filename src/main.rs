@@ -140,7 +140,7 @@ async fn airtable_loop() -> Result<()> {
                     break 'mainloop;
                 }
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
         }
 
         if let Err(err) = ProfileRepls::download(&user.fields.token, user.clone()).await {
