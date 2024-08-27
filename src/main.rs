@@ -18,8 +18,10 @@ async fn rocket() -> _ {
     env_logger::init();
     dotenv::dotenv().ok();
     tokio::spawn(async {
-        if let Err(err) = airtable_loop().await {
-            error!("Airtable internal loop error, OH NO: {err}")
+        loop {
+            if let Err(err) = airtable_loop().await {
+                error!("Airtable internal loop error (restarting): {err}");
+            }
         }
     });
 
