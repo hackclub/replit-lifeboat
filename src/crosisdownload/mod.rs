@@ -76,7 +76,7 @@ pub async fn download(
     replname: &str,
     download_locations: DownloadLocations,
     ts_offset: i64,
-    email: String,
+    email: &str,
 ) -> Result<()> {
     debug!("https://replit.com/replid/{}", &replid);
 
@@ -103,7 +103,7 @@ async fn download_internal(
     replname: &str,
     download_locations: DownloadLocations,
     ts_offset: i64,
-    email: String,
+    email: &str,
 ) -> Result<()> {
     // Will take up to a max of 2 minutes until it fails if ratelimited
     let mut chan0 = client.connect_max_retries_and_backoff(5, 3000, 2).await?;
@@ -397,7 +397,7 @@ async fn download_internal(
         download_locations.git,
         download_locations.ot,
         ts_offset,
-        email,
+        email.to_string(),
         is_git,
         dotenv_content,
     )

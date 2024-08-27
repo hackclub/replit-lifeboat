@@ -50,8 +50,8 @@ fn hello() -> String {
     )
 }
 
-#[post("/signup?<token>&<custom_email>")]
-async fn signup(token: String, custom_email: Option<String>) -> String {
+#[post("/signup?<token>&<email>")]
+async fn signup(token: String, email: String) -> String {
     // Get the user info, add to the airtable, respond to them
     let user = match QuickUser::fetch(&token, None).await {
         Ok(user) => user,
@@ -64,8 +64,6 @@ async fn signup(token: String, custom_email: Option<String>) -> String {
             return "Sorry, but we couldn't get your replit user info".into();
         }
     };
-
-    let email = custom_email.unwrap_or(user.get_email_unsafe().to_string());
 
     let at_user = user.clone();
 

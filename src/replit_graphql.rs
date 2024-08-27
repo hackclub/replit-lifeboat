@@ -70,7 +70,6 @@ pub struct QuickUserQuery;
 pub struct QuickUser {
     pub id: i64,
     pub username: String,
-    email: String,
 }
 
 impl QuickUser {
@@ -106,22 +105,8 @@ impl QuickUser {
             .and_then(|d| d.current_user)
             .map(|u| u.username)
             .ok_or_else(|| "Missing username".to_string())?;
-        let email = user_data
-            .clone()
-            .and_then(|d| d.current_user)
-            .map(|u| u.email)
-            .ok_or_else(|| "Missing email".to_string())?;
 
-        Ok(Self {
-            id,
-            username,
-            email,
-        })
-    }
-
-    /// Remember users can pass custom emails
-    pub fn get_email_unsafe(&self) -> &str {
-        &self.email
+        Ok(Self { id, username })
     }
 }
 
@@ -242,7 +227,7 @@ impl ProfileRepls {
                         ot: ot_location,
                     },
                     ts.unix_timestamp(),
-                    current_user.email.clone(),
+                    &synced_user.fields.email,
                 );
 
                 // At 30 minutes abandon the repl download
