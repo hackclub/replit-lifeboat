@@ -305,19 +305,39 @@ impl ProfileRepls {
 
         // Hey, if even one repl was downloaded let's give it to them.
         if success_count > 0 {
-            if let Err(err) = send_partial_success_email(
-                &synced_user.fields.email,
-                &synced_user.fields.username,
-                i,
-                errored,
-                &link,
-            )
-            .await
-            {
-                error!(
-                    "Failed to send partial success email to {}: {:?}",
-                    &synced_user.fields.email, err
-                );
+            let full_success = success_count == repl_count;
+
+            if full_success {
+                if let Err(err) = send_success_email(
+                    &synced_user.fields.email,
+                    &synced_user.fields.username,
+                    i,
+                    &link,
+                )
+                .await
+                {
+                    error!(
+                        "Couldn't send the success email to {}: {:?}",
+                        synced_user.fields.email, err
+                    );
+                }
+                synced_user.fields.status = ProcessState::R2LinkEmailSent;
+                airtable::update_records(vec![synced_user]).await?;
+            } else {
+                if let Err(err) = send_partial_success_email(
+                    &synced_user.fields.email,
+                    &synced_user.fields.username,
+                    i,
+                    errored,
+                    &link,
+                )
+                .await
+                {
+                    error!(
+                        "Failed to send partial success email to {}: {:?}",
+                        &synced_user.fields.email, err
+                    );
+                }
             }
         } else {
             // Shit's fucked.
@@ -346,23 +366,6 @@ We've been notified, and will fix this! We'll get back to you about this.",
             synced_user.fields.status = ProcessState::DownloadedRepls;
             airtable::update_records(vec![synced_user.clone()]).await?;
         }
-
-        if let Err(err) = send_success_email(
-            &synced_user.fields.email,
-            &synced_user.fields.username,
-            i,
-            &link,
-        )
-        .await
-        {
-            error!(
-                "Couldn't send the success email to {}: {:?}",
-                synced_user.fields.email, err
-            );
-        }
-
-        synced_user.fields.status = ProcessState::R2LinkEmailSent;
-        airtable::update_records(vec![synced_user]).await?;
 
         Ok(())
     }
