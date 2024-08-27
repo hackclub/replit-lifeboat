@@ -87,10 +87,7 @@ async fn signup(token: String, email: String) -> String {
         error!("Couldn't send the greeting email to {:?}: {:?}", user, err);
     }
 
-    format!(
-        "You're signed up, {}! We've emailed you at {email} with details.",
-        user.username
-    )
+    format!("You're signed up, {}! We've emailed you.", user.username)
 }
 
 #[get("/progress?<token>")]
