@@ -1,3 +1,4 @@
+use anyhow::Result;
 pub mod emails;
 pub mod test_routes;
 
@@ -9,14 +10,13 @@ use lettre::{
     },
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
-use std::error::Error;
 
 pub async fn send_email(
     to: &str,
     subject: String,
     body: String,
     content_type: ContentType,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     // "Malted <malted@hackclub.com>"
     let message = Message::builder()
         .from("Hack Club <malted@hackclub.com>".parse()?)
@@ -41,5 +41,5 @@ pub async fn send_email(
         .send(message)
         .await
         .map(|_| ())
-        .map_err(|err| Box::new(err) as Box<dyn Error>)
+        .map_err(|err| err.into())
 }
