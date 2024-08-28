@@ -1,4 +1,3 @@
-use anyhow::Result;
 use askama::Template;
 use lettre::message::header::ContentType;
 
@@ -14,7 +13,7 @@ pub struct TestTemplate<'a> {
 pub struct GreetTemplate<'a> {
     pub username: &'a str,
 }
-pub async fn send_greet_email(to: &str, username: &str) -> Result<()> {
+pub async fn send_greet_email(to: &str, username: &str) -> Result<(), Box<dyn std::error::Error>> {
     super::send_email(
         to,
         "Your Replit⠕ export is on its way!".to_string(),
@@ -39,7 +38,7 @@ pub async fn send_partial_success_email(
     repl_count_total: usize,
     repl_ids_failed: Vec<String>,
     link_export_download: &str,
-) -> Result<()> {
+) -> Result<(), Box<dyn std::error::Error>> {
     super::send_email(
         to,
         "Your Replit⠕ export has (mostly) arrived!".to_string(),
@@ -68,7 +67,7 @@ pub async fn send_success_email(
     username: &str,
     repl_count_total: usize,
     link_export_download: &str,
-) -> Result<()> {
+) -> Result<(), Box<dyn std::error::Error>> {
     super::send_email(
         to,
         "Your Replit⠕ export has arrived!".to_string(),
