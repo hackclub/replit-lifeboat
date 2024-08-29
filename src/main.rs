@@ -8,10 +8,26 @@ use replit_takeout::{
     replit_graphql::{ProfileRepls, QuickUser},
 };
 use std::{collections::HashMap, time::Duration};
+use rocket::serde::json::Json;
 mod r2;
 
 struct State {
     token_to_id_cache: tokio::sync::RwLock<HashMap<String, i64>>, // <token, id>
+}
+
+#[derive(serde::Serialize)]
+struct SignupResponse {
+    success: bool,
+    message: String
+}
+impl SignupResponse {
+    fn good(message: String) -> Json<Self> {
+        Json(Self { success: true, message })
+    }
+
+    fn bad(message: String) -> Json<Self> {
+        Json(Self { success: false, message })
+    }
 }
 
 #[launch]
@@ -54,11 +70,11 @@ fn hello() -> String {
 }
 
 #[post("/signup?<token>&<email>")]
-async fn signup(token: String, email: String) -> String {
+async fn signup(token: String, email: String) -> Json<SignupResponse> {
     let parts: Vec<&str> = token.split('.').collect();
 
     if parts.len() != 3 || BASE64_URL_SAFE.decode(parts.get(1).unwrap()).is_err() {
-        return "That's not a Replit connect.sid".into();
+        return SignupResponse::bad("That's not a Replit connect.sid".to_string());
     }
 
     // Get the user info, add to the airtable, respond to them
@@ -70,7 +86,7 @@ async fn signup(token: String, email: String) -> String {
                 token,
                 e
             );
-            return "Couldn't get Replit user info".into();
+            return SignupResponse::bad("Couldn't get Replit user info".to_string());
         }
     };
 
@@ -88,7 +104,7 @@ async fn signup(token: String, email: String) -> String {
     .await
     {
         error!("Couldn't add {:?} to airtable", user);
-        return format!("Sorry, {}! We couldn't add you to the queue for some reason. Please contact us at malted@hackclub.com!", user.username);
+        return SignupResponse::bad(format!("Sorry, {}! We couldn't add you to the queue for some reason. Please contact us at malted@hackclub.com!", user.username));
     }
 
     if let Err(err) = replit_takeout::email::emails::send_greet_email(&email, &user.username).await
@@ -96,7 +112,7 @@ async fn signup(token: String, email: String) -> String {
         error!("Couldn't send the greeting email to {:?}: {:?}", user, err);
     }
 
-    format!("You're signed up, {}! We've emailed you.", user.username)
+    SignupResponse::good(format!("You're signed up, {}! We've emailed you.", user.username))
 }
 
 #[get("/progress?<token>")]
