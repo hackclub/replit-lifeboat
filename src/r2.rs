@@ -24,7 +24,7 @@ static BUCKET: Lazy<Bucket> = Lazy::new(|| {
     .with_path_style()
 });
 
-pub async fn upload(path: String, payload: &mut impl AsyncRead) -> Result<(), S3Error> {
+pub async fn upload(path: String, payload: &[u8]) -> Result<(), S3Error> {
     /* Start the multipart upload. With the S3 multipart API, you start a
      * multipart upload, send the chunks (in any order - they have indices),
      * and then close out the upload. (Fun fact: S3 doesn't impose any limits
