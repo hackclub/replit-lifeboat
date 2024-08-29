@@ -24,12 +24,15 @@ static BUCKET: Lazy<Bucket> = Lazy::new(|| {
     .with_path_style()
 });
 
-pub async fn upload(path: String, payload: &[u8]) -> Result<(), S3Error> {
-    let start_mu_up = BUCKET
+pub async fn upload(path: String, payload: &mut impl AsyncRead) -> Result<(), S3Error> {
+    /* Start the multipart upload. With the S3 multipart API, you start a
+     * multipart upload, send the chunks (in any order - they have indices),
+     * and then close out the upload. (Fun fact: S3 doesn't impose any limits
+     * on how long this can take, but R2 imposes a 7 day limit.) */
+    let upload_id = BUCKET
         .initiate_multipart_upload(&path, "application/octet-stream")
-        .await?;
-
-    let upload_id = start_mu_up.upload_id;
+        .await?
+        .upload_id;
 
     let mut etags = Vec::new();
     let mut handles = vec![];
