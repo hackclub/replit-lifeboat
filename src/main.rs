@@ -112,7 +112,7 @@ async fn signup(token: String, email: String) -> Json<SignupResponse> {
         error!("Couldn't send the greeting email to {:?}: {:?}", user, err);
     }
 
-    SignupResponse::good(format!("You're signed up, {}! We've emailed you.", user.username))
+    SignupResponse::good(format!("Check your email, {}!", user.username))
 }
 
 #[get("/progress?<token>")]
