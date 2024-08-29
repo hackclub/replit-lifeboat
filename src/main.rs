@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate rocket;
 use anyhow::Result;
+use base64::prelude::*;
 use replit_takeout::{
     airtable::{self, ProcessState},
     email::test_routes::*,
@@ -54,6 +55,12 @@ fn hello() -> String {
 
 #[post("/signup?<token>&<email>")]
 async fn signup(token: String, email: String) -> String {
+    let parts: Vec<&str> = token.split('.').collect();
+
+    if parts.len() != 3 || BASE64_URL_SAFE.decode(parts.get(1).unwrap()).is_err() {
+        return "That's not a Replit connect.sid".into();
+    }
+
     // Get the user info, add to the airtable, respond to them
     let user = match QuickUser::fetch(&token, None).await {
         Ok(user) => user,
@@ -63,7 +70,7 @@ async fn signup(token: String, email: String) -> String {
                 token,
                 e
             );
-            return "Sorry, but we couldn't get your replit user info".into();
+            return "Couldn't get Replit user info".into();
         }
     };
 
