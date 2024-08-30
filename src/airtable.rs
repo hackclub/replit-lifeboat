@@ -111,6 +111,10 @@ pub enum ProcessState {
     /// Errored while trying to upload to R2
     #[serde(rename = "ErroredR2")]
     ErroredR2,
+
+    /// The user didn't have any repls to download
+    #[serde(rename = "NoRepls")]
+    NoRepls,
 }
 
 impl fmt::Display for ProcessState {
@@ -126,6 +130,7 @@ impl fmt::Display for ProcessState {
             ProcessState::Errored => "Errored",
             ProcessState::ErroredMain => "ErroredMain",
             ProcessState::ErroredR2 => "ErroredR2",
+            ProcessState::NoRepls => "NoRepls",
         };
         write!(f, "{}", value)
     }

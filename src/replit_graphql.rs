@@ -194,6 +194,25 @@ impl ProfileRepls {
 
         report_progress(&current_user, 0, repl_count); // Report the user's progress.
 
+        if repl_count == 0 {
+            if let Err(err) = crate::email::send_email(
+                &synced_user.fields.email,
+                "Your Replit⠕ export failed".into(),
+                format!(
+                    "Hey {}, you tried to export your repls, but you don't have any repls - what are you doing? Are you okay?? :)",
+                    synced_user.fields.username
+                ),
+                lettre::message::header::ContentType::TEXT_PLAIN,
+            ).await
+            {
+                error!("Couldn't send the 0 repl email to {}: {:?}", synced_user.fields.email, err);
+            }
+
+            synced_user.fields.status = ProcessState::NoRepls;
+            airtable::update_records(vec![synced_user.clone()]).await?;
+            return Err("User had no repls".into());
+        }
+
         let mut i = 0;
         let mut j = 0;
         let mut errored = vec![];
