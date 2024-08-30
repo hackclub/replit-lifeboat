@@ -1,4 +1,5 @@
 use airtable_api::Record;
+use anyhow::Result;
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
 use reqwest::{
@@ -73,17 +74,15 @@ pub struct QuickUser {
 }
 
 impl QuickUser {
-    pub async fn fetch(token: &String, client_opt: Option<Client>) -> Result<Self, String> {
-        let client = create_client(token, client_opt).map_err(|e| e.to_string())?;
+    pub async fn fetch(token: &String, client_opt: Option<Client>) -> Result<Self> {
+        let client = create_client(token, client_opt)?;
         let user_data: String = client
             .post(REPLIT_GQL_URL)
             .json(&QuickUserQuery::build_query(quick_user_query::Variables {}))
             .send()
-            .await
-            .map_err(|e| e.to_string())?
+            .await?
             .text()
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
 
         debug!(
             "{}:{} Raw text quick user data: {user_data}",
@@ -91,20 +90,19 @@ impl QuickUser {
             std::column!()
         );
 
-        let user_data: Response<quick_user_query::ResponseData> =
-            serde_json::from_str(&user_data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let user_data: Response<quick_user_query::ResponseData> = serde_json::from_str(&user_data)?;
 
         let user_data = user_data.data;
         let id = user_data
             .clone()
             .and_then(|d| d.current_user)
             .map(|u| u.id)
-            .ok_or_else(|| "Missing user id".to_string())?;
+            .ok_or_else(|| anyhow::Error::msg("Missing user id"))?;
         let username = user_data
             .clone()
             .and_then(|d| d.current_user)
             .map(|u| u.username)
-            .ok_or_else(|| "Missing username".to_string())?;
+            .ok_or_else(|| anyhow::Error::msg("Missing username"))?;
 
         Ok(Self { id, username })
     }
@@ -125,13 +123,10 @@ impl ProfileRepls {
         id: i64,
         client_opt: Option<Client>,
         after: Option<String>,
-    ) -> Result<
-        (
-            Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
-            Option<String>,
-        ),
-        Box<dyn Error + Sync + Send>,
-    > {
+    ) -> Result<(
+        Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
+        Option<String>,
+    )> {
         let client = create_client(token, client_opt)?;
 
         let repls_query = ProfileRepls::build_query(profile_repls::Variables { id, after });
@@ -155,7 +150,7 @@ impl ProfileRepls {
             Ok(data) => data.data,
             Err(e) => {
                 error!("Failed to deserialize JSON: {}", e);
-                return Err(Box::new(e));
+                return Err(anyhow::Error::new(e));
             }
         };
 
@@ -166,11 +161,11 @@ impl ProfileRepls {
                     .as_ref()
                     .map(|user| user.profile_repls.page_info.next_cursor.clone())
             })
-            .ok_or("Page Info not found during download")?;
+            .ok_or(anyhow::Error::msg("Page Info not found during download"))?;
 
         let repls = repls_data_result_2
             .and_then(|data| data.user.map(|user| user.profile_repls.items))
-            .ok_or("Repls not found during download")?;
+            .ok_or(anyhow::Error::msg("Repls not found during download"))?;
 
         Ok((repls, next_page))
     }
@@ -178,7 +173,7 @@ impl ProfileRepls {
     pub async fn download(
         token: &String,
         mut synced_user: Record<AirtableSyncedUser>,
-    ) -> Result<(), Box<dyn Error + Sync + Send>> {
+    ) -> Result<()> {
         synced_user.fields.status = ProcessState::CollectingRepls;
         airtable::update_records(vec![synced_user.clone()]).await?;
 
@@ -210,7 +205,7 @@ impl ProfileRepls {
 
             synced_user.fields.status = ProcessState::NoRepls;
             airtable::update_records(vec![synced_user.clone()]).await?;
-            return Err("User had no repls".into());
+            return Err(anyhow::Error::msg("User had no repls"));
         }
 
         let mut i = 0;
@@ -305,7 +300,7 @@ impl ProfileRepls {
         let zip_path = format!("repls/{}.zip", current_user.username); // Local
         let upload_path = format!("export/{}.zip", current_user.username); // Remote
 
-        let upload_result = r2::upload(upload_path.clone(), &fs::read(&zip_path).await?).await;
+        let upload_result = r2::upload(upload_path.clone(), zip_path.clone()).await;
         fs::remove_file(&zip_path).await?;
         synced_user.fields.status = ProcessState::WaitingInR2;
         airtable::update_records(vec![synced_user.clone()]).await?;
@@ -314,7 +309,7 @@ impl ProfileRepls {
             synced_user.fields.status = ProcessState::ErroredR2;
             airtable::update_records(vec![synced_user.clone()]).await?;
             error!("Failed to upload {upload_path} to R2");
-            return Err(Box::new(upload_err));
+            return Err(upload_err);
         }
 
         let link = r2::get(upload_path, format!("{}.zip", current_user.username)).await?;
@@ -401,9 +396,9 @@ pub struct ReplsDashboardReplFolderList;
 fn report_progress(user: &QuickUser, elapsed: usize, repl_count: usize) {
     let task_usr = user.clone();
     tokio::spawn(async move {
-        if let Err(err) = r2::upload(
-            format!("progress/{}", task_usr.id),
-            format!("{elapsed}/{repl_count}").as_bytes(),
+        if let Err(err) = r2::upload_string(
+            &format!("progress/{}", task_usr.id),
+            format!("{elapsed}/{repl_count}"),
         )
         .await
         {
