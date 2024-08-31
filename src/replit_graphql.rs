@@ -205,7 +205,7 @@ impl ProfileRepls {
 
             synced_user.fields.status = ProcessState::NoRepls;
             airtable::update_records(vec![synced_user.clone()]).await?;
-            return Err(anyhow::Error::msg("User had no repls"));
+            return Ok(());
         }
 
         let mut i = 0;
