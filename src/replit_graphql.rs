@@ -118,6 +118,7 @@ type DateTime = String;
 pub struct ProfileRepls;
 
 impl ProfileRepls {
+    /// Get one page of repls.
     pub async fn fetch(
         token: &String,
         id: i64,
@@ -143,18 +144,17 @@ impl ProfileRepls {
             std::line!(),
             std::column!()
         );
+
         let repls_data_result =
-            serde_json::from_str::<Response<profile_repls::ResponseData>>(&repls_data);
+            match serde_json::from_str::<Response<profile_repls::ResponseData>>(&repls_data) {
+                Ok(data) => data.data,
+                Err(e) => {
+                    error!("Failed to deserialize JSON: {}", e);
+                    return Err(anyhow::Error::new(e));
+                }
+            };
 
-        let repls_data_result_2 = match repls_data_result {
-            Ok(data) => data.data,
-            Err(e) => {
-                error!("Failed to deserialize JSON: {}", e);
-                return Err(anyhow::Error::new(e));
-            }
-        };
-
-        let next_page = repls_data_result_2
+        let next_page = repls_data_result
             .as_ref()
             .and_then(|data| {
                 data.user
@@ -163,7 +163,7 @@ impl ProfileRepls {
             })
             .ok_or(anyhow::Error::msg("Page Info not found during download"))?;
 
-        let repls = repls_data_result_2
+        let repls = repls_data_result
             .and_then(|data| data.user.map(|user| user.profile_repls.items))
             .ok_or(anyhow::Error::msg("Repls not found during download"))?;
 
@@ -184,11 +184,24 @@ impl ProfileRepls {
         fs::create_dir_all("repls").await?;
         fs::create_dir(format!("repls/{}", current_user.username)).await?;
 
-        let (mut repls, mut cursor) = Self::fetch(token, current_user.id, None, None).await?;
+        let mut repls = Vec::new();
+        let mut cursor = None;
+
+        loop {
+            let (mut page_of_repls, new_cursor) =
+                Self::fetch(token, current_user.id, None, cursor).await?;
+            repls.append(&mut page_of_repls);
+
+            if let Some(next_cursor) = new_cursor {
+                cursor = Some(next_cursor);
+            } else {
+                break;
+            }
+        }
+
         let repl_count = repls.len();
 
         let mut progress = ExportProgress::new(repl_count);
-
         progress.report(&current_user); // Report the user's progress.
 
         if repl_count == 0 {
@@ -213,82 +226,69 @@ impl ProfileRepls {
         let mut i = 0;
         let mut j = 0;
         let mut errored = vec![];
-        loop {
-            for repl in repls {
-                let main_location = format!("repls/{}/{}/", current_user.username, repl.slug);
-                let git_location = format!("repls/{}/{}.git/", current_user.username, repl.slug);
-                let staging_git_location =
-                    format!("repls/{}/{}.gitstaging/", current_user.username, repl.slug);
-                let ot_location =
-                    format!("repls/{}/{}.otbackup/", current_user.username, repl.slug);
+        for repl in repls {
+            let main_location = format!("repls/{}/{}/", current_user.username, repl.slug);
+            let git_location = format!("repls/{}/{}.git/", current_user.username, repl.slug);
+            let staging_git_location =
+                format!("repls/{}/{}.gitstaging/", current_user.username, repl.slug);
+            let ot_location = format!("repls/{}/{}.otbackup/", current_user.username, repl.slug);
 
-                fs::create_dir(&main_location).await?;
-                fs::create_dir(&git_location).await?;
-                fs::create_dir(&staging_git_location).await?;
-                fs::create_dir(&ot_location).await?;
+            fs::create_dir(&main_location).await?;
+            fs::create_dir(&git_location).await?;
+            fs::create_dir(&staging_git_location).await?;
+            fs::create_dir(&ot_location).await?;
 
-                let ts = OffsetDateTime::parse(
-                    &repl.time_created,
-                    &time::format_description::well_known::Rfc3339,
-                )?;
+            let ts = OffsetDateTime::parse(
+                &repl.time_created,
+                &time::format_description::well_known::Rfc3339,
+            )?;
 
-                let download_job = crate::crosisdownload::download(
-                    client.clone(),
-                    repl.id.clone(),
-                    &repl.slug,
-                    crate::crosisdownload::DownloadLocations {
-                        main: main_location.clone(),
-                        git: git_location,
-                        staging_git: staging_git_location,
-                        ot: ot_location,
-                    },
-                    ts.unix_timestamp(),
-                    &synced_user.fields.email,
-                );
+            let download_job = crate::crosisdownload::download(
+                client.clone(),
+                repl.id.clone(),
+                &repl.slug,
+                crate::crosisdownload::DownloadLocations {
+                    main: main_location.clone(),
+                    git: git_location,
+                    staging_git: staging_git_location,
+                    ot: ot_location,
+                },
+                ts.unix_timestamp(),
+                &synced_user.fields.email,
+            );
 
-                // At 30 minutes abandon the repl download
-                match tokio::time::timeout(Duration::from_secs(60 * 30), download_job).await {
-                    Err(_) => {
-                        error!(
-                            "Downloading {}::{} timed out after 30 minutes",
-                            repl.id, repl.slug
-                        );
-                        errored.push(repl.id);
-                        progress.failed.timed_out += 1;
-                    }
-                    Ok(Err(err)) => {
-                        error!(
-                            "Downloading {}::{} failed with error: {err:#?}",
-                            repl.id, repl.slug
-                        );
-                        errored.push(repl.id);
-                        progress.failed.failed += 1;
-                    }
-                    Ok(Ok(_)) => {
-                        info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
-                        j += 1;
-                        progress.successful += 1;
-                    }
+            // At 30 minutes abandon the repl download
+            match tokio::time::timeout(Duration::from_secs(60 * 30), download_job).await {
+                Err(_) => {
+                    error!(
+                        "Downloading {}::{} timed out after 30 minutes",
+                        repl.id, repl.slug
+                    );
+                    errored.push(repl.id);
+                    progress.failed.timed_out += 1;
                 }
+                Ok(Err(err)) => {
+                    error!(
+                        "Downloading {}::{} failed with error: {err:#?}",
+                        repl.id, repl.slug
+                    );
+                    errored.push(repl.id);
+                    progress.failed.failed += 1;
+                }
+                Ok(Ok(_)) => {
+                    info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
+                    j += 1;
+                    progress.successful += 1;
+                }
+            }
 
-                i += 1;
+            i += 1;
 
-                info!(
+            info!(
                     "Download stats ({}): {j} correctly downloaded out of {i} total attempted downloads", current_user.username
                 );
 
-                progress.report(&current_user);
-            }
-
-            if let Some(cursor_extracted) = cursor {
-                let (repls2, cursor2) =
-                    Self::fetch(token, current_user.id, None, Some(cursor_extracted)).await?;
-
-                repls = repls2;
-                cursor = cursor2;
-            } else {
-                break;
-            }
+            progress.report(&current_user);
         }
 
         progress.completed = true;
