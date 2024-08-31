@@ -36,7 +36,7 @@ pub async fn read_chunk(file_path: &str, start: usize) -> io::Result<Vec<u8>> {
     let mut buffer = vec![0; start + CHUNK_SIZE];
 
     file.seek(io::SeekFrom::Start(start as u64)).await?;
-    file.read_exact(&mut buffer).await?;
+    file.read(&mut buffer).await?;
 
     Ok(buffer)
 }
