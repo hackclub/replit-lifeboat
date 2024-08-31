@@ -8,11 +8,11 @@ use reqwest::{
     Client, Url,
 };
 use std::sync::Arc;
-use std::{error::Error, time::Duration};
+use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::fs;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     airtable::{self, AirtableSyncedUser, ProcessState},
@@ -187,7 +187,9 @@ impl ProfileRepls {
         let (mut repls, mut cursor) = Self::fetch(token, current_user.id, None, None).await?;
         let repl_count = repls.len();
 
-        report_progress(&current_user, 0, repl_count); // Report the user's progress.
+        let mut progress = ExportProgress::new(repl_count);
+
+        progress.report(&current_user); // Report the user's progress.
 
         if repl_count == 0 {
             if let Err(err) = crate::email::send_email(
@@ -252,6 +254,7 @@ impl ProfileRepls {
                             repl.id, repl.slug
                         );
                         errored.push(repl.id);
+                        progress.failed.timed_out += 1;
                     }
                     Ok(Err(err)) => {
                         error!(
@@ -259,10 +262,12 @@ impl ProfileRepls {
                             repl.id, repl.slug
                         );
                         errored.push(repl.id);
+                        progress.failed.failed += 1;
                     }
                     Ok(Ok(_)) => {
                         info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
                         j += 1;
+                        progress.successful += 1;
                     }
                 }
 
@@ -272,7 +277,7 @@ impl ProfileRepls {
                     "Download stats ({}): {j} correctly downloaded out of {i} total attempted downloads", current_user.username
                 );
 
-                report_progress(&current_user, i, repl_count);
+                progress.report(&current_user);
             }
 
             if let Some(cursor_extracted) = cursor {
@@ -286,7 +291,8 @@ impl ProfileRepls {
             }
         }
 
-        let success_count = i - errored.len();
+        progress.completed = true;
+        progress.report(&current_user);
 
         let path = format!("repls/{}", current_user.username);
         make_zip(path.clone(), format!("repls/{}.zip", current_user.username)).await?;
@@ -318,8 +324,8 @@ impl ProfileRepls {
         airtable::update_records(vec![synced_user.clone()]).await?;
 
         // Hey, if even one repl was downloaded let's give it to them.
-        if success_count > 0 {
-            let full_success = success_count == repl_count;
+        if progress.successful > 0 {
+            let full_success = progress.failed.total() == 0;
 
             if full_success {
                 if let Err(err) = send_success_email(
@@ -393,19 +399,50 @@ We've been notified, and will fix this! We'll get back to you about this.",
 )]
 pub struct ReplsDashboardReplFolderList;
 
-fn report_progress(user: &QuickUser, elapsed: usize, repl_count: usize) {
-    let task_usr = user.clone();
-    tokio::spawn(async move {
-        if let Err(err) = r2::upload_string(
-            &format!("progress/{}", task_usr.id),
-            format!("{elapsed}/{repl_count}"),
-        )
-        .await
-        {
-            error!(
-                "Couldn't upload {}'s progress report ({elapsed}/{repl_count}) to R2: {:?}",
-                task_usr.username, err
-            );
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct ExportProgress {
+    completed: bool,
+
+    /// The total number of repls the user has.
+    repl_count: usize,
+    successful: usize,
+    failed: ExportProgressFailures,
+}
+
+impl ExportProgress {
+    fn new(repl_count: usize) -> Self {
+        Self {
+            repl_count,
+            ..Default::default()
         }
-    });
+    }
+
+    fn report(&self, user: &QuickUser) {
+        let task_usr = user.clone();
+        let progress = serde_json::to_string(self).expect("a serialised progress string");
+
+        tokio::spawn(async move {
+            if let Err(err) = r2::upload_str(&format!("progress/{}", task_usr.id), &progress).await
+            {
+                error!(
+                    "Couldn't upload {}'s progress report ({progress}) to R2: {:?}",
+                    task_usr.username, err
+                );
+            }
+        });
+    }
+}
+
+#[derive(Default, Debug, Serialize, Deserialize)]
+struct ExportProgressFailures {
+    /// The number of repls that have failed to download due to hitting the download timeout threshold.
+    timed_out: usize,
+
+    /// The number of repls that have failed to download for any other reason.
+    failed: usize,
+}
+impl ExportProgressFailures {
+    fn total(&self) -> usize {
+        self.timed_out + self.failed
+    }
 }

@@ -9,7 +9,7 @@ use base64::{
 use replit_takeout::{
     airtable::{self, ProcessState},
     email::test_routes::*,
-    replit_graphql::{ProfileRepls, QuickUser},
+    replit_graphql::{ExportProgress, ProfileRepls, QuickUser},
 };
 use rocket::serde::json::Json;
 use std::{collections::HashMap, time::Duration};
@@ -130,7 +130,7 @@ async fn signup(token: String, email: String) -> Json<SignupResponse> {
 }
 
 #[get("/progress?<token>")]
-async fn get_progress(token: String, state: &rocket::State<State>) -> Option<String> {
+async fn get_progress(token: String, state: &rocket::State<State>) -> Option<Json<ExportProgress>> {
     let mut should_insert = false;
 
     let id = if let Some(id) = state.token_to_id_cache.read().await.get(&token) {
@@ -156,10 +156,12 @@ async fn get_progress(token: String, state: &rocket::State<State>) -> Option<Str
     }
 
     if let Some(bytes) = r2::get_file_contents(format!("progress/{id}")).await {
-        return std::str::from_utf8(&bytes).map(|s| s.to_string()).ok();
+        let str = std::str::from_utf8(&bytes).ok()?;
+        let progress: ExportProgress = serde_json::from_str(str).ok()?;
+        Some(Json(progress))
+    } else {
+        None
     }
-
-    None
 }
 
 async fn airtable_loop() -> Result<()> {

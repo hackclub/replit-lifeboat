@@ -119,7 +119,7 @@ pub async fn upload(remote_path: String, local_path: String) -> Result<()> {
     Ok(())
 }
 
-pub async fn upload_string(remote_path: &str, payload: String) -> Result<ResponseData, S3Error> {
+pub async fn upload_str(remote_path: &str, payload: &str) -> Result<ResponseData, S3Error> {
     BUCKET.put_object(remote_path, payload.as_bytes()).await
 }
 
