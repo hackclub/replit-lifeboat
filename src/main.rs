@@ -1,14 +1,18 @@
 #[macro_use]
 extern crate rocket;
 use anyhow::Result;
-use base64::prelude::*;
+use base64::{
+    alphabet,
+    engine::{self, general_purpose},
+    Engine as _,
+};
 use replit_takeout::{
     airtable::{self, ProcessState},
     email::test_routes::*,
     replit_graphql::{ProfileRepls, QuickUser},
 };
-use std::{collections::HashMap, time::Duration};
 use rocket::serde::json::Json;
+use std::{collections::HashMap, time::Duration};
 mod r2;
 
 struct State {
@@ -18,15 +22,21 @@ struct State {
 #[derive(serde::Serialize)]
 struct SignupResponse {
     success: bool,
-    message: String
+    message: String,
 }
 impl SignupResponse {
     fn good(message: String) -> Json<Self> {
-        Json(Self { success: true, message })
+        Json(Self {
+            success: true,
+            message,
+        })
     }
 
     fn bad(message: String) -> Json<Self> {
-        Json(Self { success: false, message })
+        Json(Self {
+            success: false,
+            message,
+        })
     }
 }
 
@@ -73,7 +83,11 @@ fn hello() -> String {
 async fn signup(token: String, email: String) -> Json<SignupResponse> {
     let parts: Vec<&str> = token.split('.').collect();
 
-    if parts.len() != 3 || BASE64_URL_SAFE.decode(parts.get(1).unwrap()).is_err() {
+    if parts.len() != 3
+        || engine::GeneralPurpose::new(&alphabet::URL_SAFE, general_purpose::NO_PAD)
+            .decode(parts.get(1).unwrap())
+            .is_err()
+    {
         return SignupResponse::bad("That's not a Replit connect.sid".to_string());
     }
 
