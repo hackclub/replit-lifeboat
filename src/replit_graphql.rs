@@ -340,22 +340,28 @@ impl ProfileRepls {
                         "Couldn't send the success email to {}: {:?}",
                         synced_user.fields.email, err
                     );
+                } else {
+                    synced_user.fields.status = ProcessState::R2LinkEmailSent;
+                    airtable::update_records(vec![synced_user]).await?;
                 }
-                synced_user.fields.status = ProcessState::R2LinkEmailSent;
-                airtable::update_records(vec![synced_user]).await?;
-            } else if let Err(err) = send_partial_success_email(
-                &synced_user.fields.email,
-                &synced_user.fields.username,
-                i,
-                errored,
-                &link,
-            )
-            .await
-            {
-                error!(
-                    "Failed to send partial success email to {}: {:?}",
-                    &synced_user.fields.email, err
-                );
+            } else {
+                if let Err(err) = send_partial_success_email(
+                    &synced_user.fields.email,
+                    &synced_user.fields.username,
+                    i,
+                    errored,
+                    &link,
+                )
+                .await
+                {
+                    error!(
+                        "Failed to send partial success email to {}: {:?}",
+                        &synced_user.fields.email, err
+                    );
+                } else {
+                    synced_user.fields.status = ProcessState::R2LinkEmailSent;
+                    airtable::update_records(vec![synced_user]).await?;
+                }
             }
         } else {
             // Shit's fucked.
