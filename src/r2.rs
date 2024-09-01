@@ -1,16 +1,14 @@
 use anyhow::Result;
 use awsregion::Region;
 use futures::stream::{self, StreamExt};
+use log::{debug, info};
 use s3::creds::Credentials;
 use s3::error::S3Error;
 use s3::request::ResponseData;
 use s3::Bucket;
 use std::collections::HashMap;
-use std::error::Error;
-use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::{self, AsyncReadExt, AsyncSeekExt};
-use tokio::sync::mpsc;
 
 use once_cell::sync::Lazy;
 
@@ -28,15 +26,14 @@ static BUCKET: Lazy<Bucket> = Lazy::new(|| {
     .with_path_style()
 });
 
-const CHUNK_SIZE: usize = 250 * 1024 * 1024; // 250 MiB
+const CHUNK_SIZE: usize = 100 * 1024 * 1024; // 100 MiB
 const CONCURRENT_UPLOADS: usize = 8;
 
-pub async fn read_chunk(file_path: &str, start: usize) -> io::Result<Vec<u8>> {
+pub async fn read_chunk(file_path: &str, start: usize, size: usize) -> io::Result<Box<[u8]>> {
     let mut file = File::open(file_path).await?;
-    let mut buffer = vec![0; start + CHUNK_SIZE];
-
+    let mut buffer: Box<[u8]> = vec![0; size].into_boxed_slice();
     file.seek(io::SeekFrom::Start(start as u64)).await?;
-    file.read(&mut buffer).await?;
+    file.read_exact(&mut buffer).await?;
 
     Ok(buffer)
 }
@@ -58,18 +55,34 @@ pub async fn upload(remote_path: String, local_path: String) -> Result<()> {
         .len();
     let num_chunks = (file_size as f64 / CHUNK_SIZE as f64).ceil() as usize;
 
-    let (part_tx, mut part_rx) = mpsc::channel(num_chunks);
+    let (part_tx, part_rx) = kanal::bounded_async(num_chunks + 1);
+    let part_tx2 = part_tx.clone();
 
     let upload_tasks = stream::iter(0..num_chunks)
         .map(|chunk_index| {
             let owned_upload_id = upload_id.to_owned();
-            let part_tx = part_tx.clone();
+            let part_tx = part_tx2.clone();
             let local_path = local_path.clone();
             let remote_path = remote_path.clone();
             tokio::spawn(async move {
-                let chunk = read_chunk(&local_path, chunk_index * CHUNK_SIZE).await.unwrap();
+                let size = if num_chunks == chunk_index + 1 {
+                    // Conversion is safe since the output would have to be < CHUNK_SIZE
+                    // which fits into a usize
+                    (file_size % CHUNK_SIZE as u64) as usize
+                } else {
+                    CHUNK_SIZE
+                };
+                let chunk = read_chunk(&local_path, chunk_index * CHUNK_SIZE, size)
+                    .await
+                    .unwrap();
+                let amt = chunk.len();
+                if !chunk.is_empty() {
+                    debug!(
+                        "Uploading: {amt}/{CHUNK_SIZE}={} - {}/{num_chunks}",
+                        amt as f64 / CHUNK_SIZE as f64,
+                        chunk_index + 1
+                    );
 
-                if chunk.len() > 0 {
                     match BUCKET
                         .put_multipart_chunk(
                             chunk.to_vec(),
@@ -80,7 +93,7 @@ pub async fn upload(remote_path: String, local_path: String) -> Result<()> {
                         )
                         .await
                     {
-                        Ok(part) => part_tx.send(part).await.unwrap(),
+                        Ok(part) => part_tx.send(Some(part)).await.unwrap(),
                         Err(put_multipart_chunk_err) => {
                             log::error!("Failed to put multipart chunk for {remote_path} (chunk {chunk_index} of {num_chunks}): {:?}", put_multipart_chunk_err);
 
@@ -94,27 +107,43 @@ pub async fn upload(remote_path: String, local_path: String) -> Result<()> {
                                                     }
                         }
                     }
+
+                    debug!(
+                        "Uploaded: {amt}/{CHUNK_SIZE}={} - {}/{num_chunks}",
+                        amt as f64 / CHUNK_SIZE as f64,
+                        chunk_index + 1
+                    );
                 }
             })
         })
         .buffer_unordered(CONCURRENT_UPLOADS);
 
+    info!("Starting upload of parts for {local_path} -> {remote_path}");
+
     upload_tasks
-        .for_each(|res| async {
+        .for_each(|res| async move {
             if let Err(e) = res {
                 eprintln!("Error in upload task: {:?}", e);
             }
         })
         .await;
 
+    info!("Uploading parts done for {local_path} -> {remote_path}");
+
+    part_tx.send(None).await?;
+
+    info!("Finalizing upload for {local_path} -> {remote_path}");
+
     let mut parts = Vec::with_capacity(num_chunks);
-    while let Some(part) = part_rx.recv().await {
+    while let Ok(Some(part)) = part_rx.recv().await {
         parts.push(part);
     }
 
     BUCKET
         .complete_multipart_upload(&remote_path, &upload_id, parts)
         .await?;
+
+    info!("Upload complete for {local_path} -> {remote_path}");
 
     Ok(())
 }

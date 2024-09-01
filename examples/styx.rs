@@ -98,11 +98,7 @@ async fn main() -> Result<()> {
     fs::create_dir("repls").await?;
     fs::create_dir(format!("repls/{}", current_user.username)).await?;
 
-    let email = if current_user.email.is_empty() {
-        String::from("malted@hackclub.com")
-    } else {
-        current_user.email
-    };
+    let email = String::from("testing.export@codemonkey51.dev");
 
     let mut after = None;
     let mut i = 0;
@@ -177,7 +173,7 @@ async fn main() -> Result<()> {
                         ot: ot_location.clone(),
                     },
                     ts.unix_timestamp(),
-                    email.clone(),
+                    &email,
                 );
 
                 // At 30 minutes abandon the repl download
