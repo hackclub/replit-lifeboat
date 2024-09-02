@@ -321,31 +321,21 @@ impl ProfileRepls {
         let link = r2::get(upload_path, format!("{}.zip", current_user.username)).await?;
 
         synced_user.fields.r2_link = link.clone();
-        airtable::update_records(vec![synced_user.clone()]).await?;
 
         // Hey, if even one repl was downloaded let's give it to them.
         if progress.successful > 0 {
             let full_success = progress.failed.total() == 0;
 
-            if full_success {
-                if let Err(err) = send_success_email(
+            let email_result = if full_success {
+                send_success_email(
                     &synced_user.fields.email,
                     &synced_user.fields.username,
-                    i,
+                    repl_count,
                     &link,
                 )
                 .await
-                {
-                    error!(
-                        "Couldn't send the success email to {}: {:?}",
-                        synced_user.fields.email, err
-                    );
-                } else {
-                    synced_user.fields.status = ProcessState::R2LinkEmailSent;
-                    airtable::update_records(vec![synced_user]).await?;
-                }
             } else {
-                if let Err(err) = send_partial_success_email(
+                send_partial_success_email(
                     &synced_user.fields.email,
                     &synced_user.fields.username,
                     i,
@@ -353,22 +343,25 @@ impl ProfileRepls {
                     &link,
                 )
                 .await
-                {
+            };
+
+            match email_result {
+                Ok(_) => {
+                    synced_user.fields.status = ProcessState::R2LinkEmailSent;
+                }
+                Err(err) => {
                     error!(
-                        "Failed to send partial success email to {}: {:?}",
-                        &synced_user.fields.email, err
+                        "Couldn't send the (partial) success email to {}: {:?}",
+                        synced_user.fields.email, err
                     );
                 } else {
                     synced_user.fields.status = ProcessState::R2LinkEmailSent;
+                    airtable::update_records(vec![synced_user]).await?;
                 }
-                synced_user.fields.failed_ids = errored.join(",");
-                airtable::update_records(vec![synced_user]).await?;
             }
         } else {
             // Shit's fucked.
             synced_user.fields.status = ProcessState::Errored;
-            synced_user.fields.failed_ids = errored.join(",");
-            airtable::update_records(vec![synced_user.clone()]).await?;
 
             if let Err(err) = crate::email::send_email(
                 &synced_user.fields.email,
@@ -387,10 +380,12 @@ We've been notified, and will fix this! We'll get back to you about this.",
                     synced_user.fields.email, err
                 );
             }
-
-            synced_user.fields.status = ProcessState::DownloadedRepls;
-            airtable::update_records(vec![synced_user.clone()]).await?;
         }
+
+        if !errored.is_empty() {
+            synced_user.fields.failed_ids = errored.join(",");
+        }
+        airtable::update_records(vec![synced_user]).await?;
 
         Ok(())
     }

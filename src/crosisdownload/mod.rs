@@ -200,7 +200,7 @@ async fn download_internal(
                                 _ => return Err(format_err!("Invalid StatRes: {:#?}", res.body)),
                             };
 
-                            if size > 50000000 {
+                            if size > 50_000_000 {
                                 warn!("{fpath} is larger than max download size of 50mb");
                             } else {
                                 file_list_writer.send(FilePath::Cont(fpath.clone())).await?;
