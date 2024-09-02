@@ -31,13 +31,13 @@ pub struct PartialSuccessTemplate<'a> {
     pub repl_count_success: usize,
     pub repl_count_total: usize,
     pub link_export_download: &'a str,
-    pub repl_ids_failed: Vec<String>,
+    pub repl_ids_failed: &'a Vec<String>,
 }
 pub async fn send_partial_success_email(
     to: &str,
     username: &str,
     repl_count_total: usize,
-    repl_ids_failed: Vec<String>,
+    repl_ids_failed: &Vec<String>,
     link_export_download: &str,
 ) -> Result<()> {
     super::send_email(
