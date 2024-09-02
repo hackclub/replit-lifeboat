@@ -349,7 +349,7 @@ impl ProfileRepls {
                     &synced_user.fields.email,
                     &synced_user.fields.username,
                     i,
-                    errored,
+                    &errored,
                     &link,
                 )
                 .await
@@ -360,8 +360,9 @@ impl ProfileRepls {
                     );
                 } else {
                     synced_user.fields.status = ProcessState::R2LinkEmailSent;
-                    airtable::update_records(vec![synced_user]).await?;
                 }
+                synced_user.fields.failed_ids = errored.join(",");
+                airtable::update_records(vec![synced_user]).await?;
             }
         } else {
             // Shit's fucked.
