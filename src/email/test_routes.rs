@@ -34,7 +34,7 @@ pub fn partial_success_test_email() -> RawHtml<String> {
         repl_count_success: 20,
         repl_count_total: 22,
         link_export_download: "https://google.com",
-        repl_ids_failed: vec!["one".into(), "two".into()],
+        repl_ids_failed: &vec!["one".into(), "two".into()],
     };
     let html = hello
         .render()
