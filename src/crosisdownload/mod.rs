@@ -74,7 +74,10 @@ pub enum DownloadStatus {
 #[derive(Clone, Copy)]
 pub struct ReplInfo<'a> {
     pub id: &'a str,
+
+    /// The username of the owner of the repl
     pub username: &'a str,
+
     pub slug: &'a str,
 }
 
@@ -108,7 +111,9 @@ pub async fn download(
                     return Err(format_err!("Error downloading repl zip: {err_download_zip}, and error deleting failed download: {err_rm_zip}"));
                 }
             }
-            Err(format_err!("Error downloading repl zip: {err_download_zip}"))
+            Err(format_err!(
+                "Error downloading repl zip: {err_download_zip}"
+            ))
         } else {
             Ok(DownloadStatus::NoHistory)
         }
