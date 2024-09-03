@@ -102,13 +102,13 @@ pub async fn download(
             replinfo.id, replinfo.slug, err
         );
 
-        if let Err(err) = download_repl_zip(client, replinfo, download_zip).await {
-            if let Err(err2) = fs::remove_file(download_zip).await {
-                if err2.kind() != ErrorKind::NotFound {
-                    return Err(format_err!("Error downloading repl zip: {err}, and error deleting failed download: {err2}"));
+        if let Err(err_download_zip) = download_repl_zip(client, replinfo, download_zip).await {
+            if let Err(err_rm_zip) = fs::remove_file(download_zip).await {
+                if err_rm_zip.kind() != ErrorKind::NotFound {
+                    return Err(format_err!("Error downloading repl zip: {err_download_zip}, and error deleting failed download: {err_rm_zip}"));
                 }
             }
-            Err(format_err!("Error downloading repl zip: {err}"))
+            Err(format_err!("Error downloading repl zip: {err_download_zip}"))
         } else {
             Ok(DownloadStatus::NoHistory)
         }
