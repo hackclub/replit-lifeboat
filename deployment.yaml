@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: replit-takeout
 spec:
-  replicas: 2
+  replicas: 8
   selector:
     matchLabels:
       app: replit-takeout
