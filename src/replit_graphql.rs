@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     airtable::{self, AirtableSyncedUser, ProcessState},
-    crosisdownload::make_zip,
+    crosisdownload::{make_zip, DownloadLocations, DownloadStatus, ReplInfo},
     email::emails::{send_partial_success_email, send_success_email},
     r2,
 };
@@ -223,8 +223,10 @@ impl ProfileRepls {
             return Ok(());
         }
 
-        let mut i = 0;
-        let mut j = 0;
+        let mut total_download_count = 0;
+        let mut successful_download_count = 0;
+        let mut no_history_download_count = 0;
+
         let mut errored = vec![];
         for repl in repls {
             let main_location = format!("repls/{}/{}/", current_user.username, repl.slug);
@@ -243,16 +245,23 @@ impl ProfileRepls {
                 &time::format_description::well_known::Rfc3339,
             )?;
 
+            let download_zip = format!("repls/{}/{}.zip", current_user.username, repl.slug);
+            let download_locations = DownloadLocations {
+                main: main_location.clone(),
+                git: git_location,
+                staging_git: staging_git_location,
+                ot: ot_location,
+            };
+
             let download_job = crate::crosisdownload::download(
                 client.clone(),
-                repl.id.clone(),
-                &repl.slug,
-                crate::crosisdownload::DownloadLocations {
-                    main: main_location.clone(),
-                    git: git_location,
-                    staging_git: staging_git_location,
-                    ot: ot_location,
+                ReplInfo {
+                    id: &repl.id,
+                    slug: &repl.slug,
+                    username: &current_user.username,
                 },
+                &download_zip,
+                download_locations.clone(),
                 ts.unix_timestamp(),
                 &synced_user.fields.email,
             );
@@ -275,17 +284,53 @@ impl ProfileRepls {
                     errored.push(repl.id);
                     progress.failed.failed += 1;
                 }
-                Ok(Ok(_)) => {
+                Ok(Ok(DownloadStatus::NoHistory)) => {
+                    info!(
+                        "Downloaded {}::{} (without history) to {}",
+                        repl.id, repl.slug, download_zip
+                    );
+                    no_history_download_count += 1;
+                    progress.failed.no_history += 1;
+
+                    if let Err(err) = fs::remove_dir_all(download_locations.git).await {
+                        warn!(
+                            "Error removing git temp dir for {}::{}: {err}",
+                            repl.id, repl.slug
+                        )
+                    }
+
+                    if let Err(err) = fs::remove_dir_all(download_locations.main).await {
+                        warn!(
+                            "Error removing main temp dir for {}::{}: {err}",
+                            repl.id, repl.slug
+                        )
+                    }
+
+                    if let Err(err) = fs::remove_dir_all(download_locations.ot).await {
+                        warn!(
+                            "Error removing ot temp dir for {}::{}: {err}",
+                            repl.id, repl.slug
+                        )
+                    }
+
+                    if let Err(err) = fs::remove_dir_all(download_locations.staging_git).await {
+                        warn!(
+                            "Error removing git staging temp dir for {}::{}: {err}",
+                            repl.id, repl.slug
+                        )
+                    }
+                }
+                Ok(Ok(DownloadStatus::Full)) => {
                     info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
-                    j += 1;
+                    successful_download_count += 1;
                     progress.successful += 1;
                 }
             }
 
-            i += 1;
+            total_download_count += 1;
 
             info!(
-                    "Download stats ({}): {j} correctly downloaded out of {i} total attempted downloads", current_user.username
+                    "Download stats ({}): {successful_download_count} ({no_history_download_count} without history) correctly downloaded out of {total_download_count} total attempted downloads", current_user.username
                 );
 
             progress.report(&current_user);
@@ -338,7 +383,7 @@ impl ProfileRepls {
                 send_partial_success_email(
                     &synced_user.fields.email,
                     &synced_user.fields.username,
-                    i,
+                    total_download_count,
                     &errored,
                     &link,
                 )
@@ -437,9 +482,12 @@ struct ExportProgressFailures {
 
     /// The number of repls that have failed to download for any other reason.
     failed: usize,
+
+    /// The number of repls that have failed to download history, but a zip was successfully downloaded
+    no_history: usize,
 }
 impl ExportProgressFailures {
     fn total(&self) -> usize {
-        self.timed_out + self.failed
+        self.timed_out + self.failed + self.no_history
     }
 }

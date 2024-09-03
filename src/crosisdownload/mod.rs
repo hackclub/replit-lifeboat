@@ -1,9 +1,9 @@
 mod metadata;
-mod util;
+pub mod util;
 
 pub use util::make_zip;
 
-use std::{path::Path, sync::Arc};
+use std::{io::ErrorKind, path::Path, sync::Arc};
 
 use anyhow::{format_err, Result};
 use crosis::{
@@ -22,7 +22,7 @@ use tokio::{
     io::AsyncWriteExt,
     sync::{OwnedSemaphorePermit, Semaphore},
 };
-use util::{do_ot, normalize_ts, recursively_flatten_dir};
+use util::{do_ot, download_repl_zip, normalize_ts, recursively_flatten_dir};
 
 // Files to ignore for history and commits
 static NO_GO: [&str; 28] = [
@@ -58,6 +58,7 @@ static NO_GO: [&str; 28] = [
 
 const MAX_FILE_PARALLELISM: usize = 20;
 
+#[derive(Clone)]
 pub struct DownloadLocations {
     pub main: String,
     pub git: String,
@@ -65,30 +66,74 @@ pub struct DownloadLocations {
     pub ot: String,
 }
 
-enum FilePath {
-    Cont(String),
-    Break,
+pub enum DownloadStatus {
+    Full,
+    NoHistory,
+}
+
+#[derive(Clone, Copy)]
+pub struct ReplInfo<'a> {
+    pub id: &'a str,
+    pub username: &'a str,
+    pub slug: &'a str,
 }
 
 pub async fn download(
     client: reqwest::Client,
-    replid: String,
-    replname: &str,
+    replinfo: ReplInfo<'_>,
+    download_zip: &str,
+    download_locations: DownloadLocations,
+    ts_offset: i64,
+    email: &str,
+) -> Result<DownloadStatus> {
+    debug!("https://replit.com/replid/{}", replinfo.id);
+
+    if let Err(err) = download_crosis(
+        client.clone(),
+        replinfo,
+        download_locations,
+        ts_offset,
+        email,
+    )
+    .await
+    {
+        warn!(
+            "Failed to download repl history for {}::{} with error: {:#?}",
+            replinfo.id, replinfo.slug, err
+        );
+
+        if let Err(err) = download_repl_zip(client, replinfo, download_zip).await {
+            if let Err(err2) = fs::remove_file(download_zip).await {
+                if err2.kind() != ErrorKind::NotFound {
+                    return Err(format_err!("Error downloading repl zip: {err}, and error deleting failed download: {err2}"));
+                }
+            }
+            Err(format_err!("Error downloading repl zip: {err}"))
+        } else {
+            Ok(DownloadStatus::NoHistory)
+        }
+    } else {
+        Ok(DownloadStatus::Full)
+    }
+}
+
+pub async fn download_crosis(
+    client: reqwest::Client,
+    replinfo: ReplInfo<'_>,
+
     download_locations: DownloadLocations,
     ts_offset: i64,
     email: &str,
 ) -> Result<()> {
-    debug!("https://replit.com/replid/{}", &replid);
-
     let client = Client::new(Box::new(CookieJarConnectionMetadataFetcher {
         client,
-        replid: replid.clone(),
+        replid: replinfo.id.to_string(),
     }));
 
     let close_watcher = client.close_recv.clone();
 
     tokio::select! {
-        res = download_internal(client, replid, replname, download_locations, ts_offset, email) => {
+        res = download_crosis_internal(client, replinfo, download_locations, ts_offset, email) => {
             res
         }
         data = close_watcher.recv() => {
@@ -97,10 +142,13 @@ pub async fn download(
     }
 }
 
-async fn download_internal(
+async fn download_crosis_internal(
     mut client: Client,
-    replid: String,
-    replname: &str,
+    ReplInfo {
+        id: replid,
+        slug: replname,
+        ..
+    }: ReplInfo<'_>,
     download_locations: DownloadLocations,
     ts_offset: i64,
     email: &str,
@@ -177,7 +225,7 @@ async fn download_internal(
                             if fpath == ".git" {
                                 is_git = true;
                             } else if fpath == ".replit-takeout-otbackup" {
-                                file_list_writer.send(FilePath::Break).await?;
+                                file_list_writer.send(None).await?;
                                 return Err(format_err!(
                                     "Repl cannot already have `.replit-takeout-otbackup/` dir"
                                 ));
@@ -203,9 +251,9 @@ async fn download_internal(
                             if size > 50_000_000 {
                                 warn!("{fpath} is larger than max download size of 50mb");
                             } else {
-                                file_list_writer.send(FilePath::Cont(fpath.clone())).await?;
+                                file_list_writer.send(Some(fpath.clone())).await?;
 
-                                file_list_writer2.send(FilePath::Cont(fpath)).await?;
+                                file_list_writer2.send(Some(fpath)).await?;
                             }
                         }
                         _ => {
@@ -233,7 +281,7 @@ async fn download_internal(
             }
         }
 
-        file_list_writer.send(FilePath::Break).await?;
+        file_list_writer.send(None).await?;
 
         // trace!("Obtained file list for {replid}::{replname}");
 
@@ -247,7 +295,7 @@ async fn download_internal(
     // Should test / benchmark if time is available.
     let main_download = download_locations.main.clone();
     let handle = tokio::spawn(async move {
-        while let Ok(FilePath::Cont(path)) = file_list_reader2.recv().await {
+        while let Ok(Some(path)) = file_list_reader2.recv().await {
             let download_path = format!("{main_download}{path}");
             let download_path = Path::new(&download_path);
 
@@ -286,7 +334,7 @@ async fn download_internal(
     // Should test / benchmark if time is available.
     let main_download = download_locations.main.clone();
     let handle2 = tokio::spawn(async move {
-        while let Ok(FilePath::Cont(path)) = file_list_reader3.recv().await {
+        while let Ok(Some(path)) = file_list_reader3.recv().await {
             let download_path = format!("{main_download}{path}");
             let download_path = Path::new(&download_path);
 
@@ -324,7 +372,7 @@ async fn download_internal(
     let semaphore = Arc::new(Semaphore::new(MAX_FILE_PARALLELISM));
     let mut set = tokio::task::JoinSet::new();
 
-    while let Ok(FilePath::Cont(file)) = file_list_reader.recv().await {
+    while let Ok(Some(file)) = file_list_reader.recv().await {
         let permit = semaphore.clone().acquire_owned().await?;
 
         let file_channel = client

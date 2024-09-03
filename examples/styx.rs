@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 use graphql_client::{GraphQLQuery, Response};
 use log::*;
-use replit_takeout::crosisdownload::{download, make_zip, DownloadLocations};
+use replit_takeout::crosisdownload::{download, make_zip, DownloadLocations, ReplInfo};
 use reqwest::{cookie::Jar, header, Client, Url};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::fs;
@@ -158,14 +158,19 @@ async fn main() -> Result<()> {
 
                 dbg!(ts);
 
+                let download_zip = format!("repls/{}/{}.zip", current_user.username, repl.slug);
                 let download_job = download(
                     reqwest::Client::builder()
                         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
                         .default_headers(headers.clone())
                         .cookie_provider(jar.clone())
                         .build()?,
-                    repl.id.clone(),
-                    &repl.slug,
+                    ReplInfo {
+                        id: &repl.id,
+                        slug: &repl.slug,
+                        username: &current_user.username,
+                    },
+                    &download_zip,
                     DownloadLocations {
                         main: main_location.clone(),
                         git: git_location.clone(),

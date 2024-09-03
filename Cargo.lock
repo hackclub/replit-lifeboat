@@ -547,8 +547,8 @@ dependencies = [
 
 [[package]]
 name = "crosis"
-version = "0.3.3"
-source = "git+https://github.com/PotentialStyx/crosis-rust.git#dbcb910ae2fb9d40c6e4c9b514d93c7525b595e1"
+version = "0.3.4"
+source = "git+https://github.com/PotentialStyx/crosis-rust.git#d5fea98adfa4e30c7bafeb6deb1164591a61165a"
 dependencies = [
  "async-trait",
  "fastrand",
