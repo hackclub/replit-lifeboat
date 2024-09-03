@@ -368,8 +368,8 @@ impl ProfileRepls {
         synced_user.fields.r2_link = link.clone();
 
         // Hey, if even one repl was downloaded let's give it to them.
-        if progress.successful > 0 {
-            let full_success = progress.failed.total() == 0;
+        if progress.successful + progress.failed.no_history > 0 {
+            let full_success = progress.failed.failed + progress.failed.timed_out == 0;
 
             let email_result = if full_success {
                 send_success_email(
