@@ -3,7 +3,9 @@ use async_zip::{base::write::ZipFileWriter, ZipEntryBuilder};
 use crc32fast::Hasher;
 use crosis::goval::{self, OtPacket};
 use ropey::Rope;
-use tokio::fs;
+use tokio::{fs, io::AsyncWriteExt};
+
+use super::ReplInfo;
 
 const STEP_SIZE: i64 = 60 * 60;
 const STEP_SIZE_HALF: i64 = STEP_SIZE / 2;
@@ -131,6 +133,32 @@ pub async fn make_zip(dir: String, zip_path: String) -> Result<()> {
         writer.write_entry_whole(builder, &data).await?;
     }
     writer.close().await?;
+
+    Ok(())
+}
+
+pub async fn download_repl_zip(
+    client: reqwest::Client,
+    replinfo: ReplInfo<'_>,
+    location: &str,
+) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(location)
+        .await?;
+    let mut res = client
+        .get(format!(
+            "https://replit.com/@{}/{}.zip",
+            replinfo.username, replinfo.slug
+        ))
+        .send()
+        .await?;
+
+    while let Some(chunk) = res.chunk().await? {
+        file.write_all(&chunk).await?;
+    }
 
     Ok(())
 }

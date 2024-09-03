@@ -10,7 +10,7 @@ authors = ["Ben Dixon <malted@malted.dev>"]
 anyhow = "1.0.86"
 async-trait = "0.1.81"
 crc32fast = "1.4.2"
-crosis = { git = "https://github.com/PotentialStyx/crosis-rust.git", version = "0.3.3", default-features = false, features = ["chan_buf", "serde", "notif_on_close"]  }
+crosis = { git = "https://github.com/PotentialStyx/crosis-rust.git", version = "0.3.4", default-features = false, features = ["chan_buf", "serde", "notif_on_close"]  }
 airtable-api = "0.1.36"
 dotenv = "0.15.0"
 env_logger = "0.11.5"
