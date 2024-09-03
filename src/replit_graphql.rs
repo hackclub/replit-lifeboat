@@ -354,9 +354,6 @@ impl ProfileRepls {
                         "Couldn't send the (partial) success email to {}: {:?}",
                         synced_user.fields.email, err
                     );
-                } else {
-                    synced_user.fields.status = ProcessState::R2LinkEmailSent;
-                    airtable::update_records(vec![synced_user]).await?;
                 }
             }
         } else {
