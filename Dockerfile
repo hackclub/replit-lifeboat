@@ -40,9 +40,5 @@ RUN apt-get update && apt-get install -y \
 # Copy the release binary from the builder stage
 COPY --from=builder /replit-takeout/target/release/replit-takeout /usr/local/bin/replit-takeout
 
-
-ENV RUST_LOG=debug
-ENV ROCKET_ADDRESS=0.0.0.0
-
 # Set the startup command
 CMD ["sh", "-c", "/usr/local/bin/replit-takeout"]

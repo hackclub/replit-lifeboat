@@ -19,7 +19,7 @@ spec:
             - containerPort: 8000
           env:
             - name: RUST_LOG
-              value: "trace"
+              value: "debug"
             - name: ROCKET_ADDRESS
               value: "0.0.0.0"
             - name: GMAIL_SMTP_USER
