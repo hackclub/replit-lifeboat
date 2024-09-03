@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
     );
 
     let client = Client::builder()
-        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
+        .user_agent(replit_takeout::utils::random_user_agent())
         .default_headers(headers.clone())
         .cookie_provider(jar.clone())
         .build()?;
@@ -161,7 +161,7 @@ async fn main() -> Result<()> {
                 let download_zip = format!("repls/{}/{}.zip", current_user.username, repl.slug);
                 let download_job = download(
                     reqwest::Client::builder()
-                        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
+                        .user_agent(replit_takeout::utils::random_user_agent())
                         .default_headers(headers.clone())
                         .cookie_provider(jar.clone())
                         .build()?,

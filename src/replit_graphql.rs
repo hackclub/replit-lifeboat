@@ -53,7 +53,7 @@ fn create_client(token: &String, client: Option<Client>) -> Result<Client, reqwe
     }
 
     Client::builder()
-        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
+        .user_agent(crate::utils::random_user_agent())
         .default_headers(create_client_headers())
         .cookie_provider(create_client_cookie_jar(token))
         .build()
