@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: replit-takeout
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: replit-takeout
@@ -57,4 +57,3 @@ spec:
                 secretKeyRef:
                   name: storage-bucket
                   key: R2_ENDPOINT
-
