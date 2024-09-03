@@ -1,6 +1,6 @@
 [package]
 name = "replit-takeout"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 authors = ["Ben Dixon <malted@malted.dev>"]
 
