@@ -6,6 +6,7 @@ use base64::{
     engine::{self, general_purpose},
     Engine as _,
 };
+use rand::Rng;
 use replit_takeout::{
     airtable::{self, ProcessState},
     email::test_routes::*,
@@ -165,6 +166,9 @@ async fn get_progress(token: String, state: &rocket::State<State>) -> Option<Jso
 }
 
 async fn airtable_loop() -> Result<()> {
+    let initial_wait = rand::thread_rng().gen_range(0..60);
+    tokio::time::sleep(Duration::from_secs(initial_wait)).await;
+
     loop {
         let mut user;
         'mainloop: loop {
@@ -176,7 +180,7 @@ async fn airtable_loop() -> Result<()> {
                     break 'mainloop;
                 }
             }
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
 
         if let Err(err) = ProfileRepls::download(&user.fields.token, user.clone()).await {
