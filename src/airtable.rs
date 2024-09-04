@@ -37,10 +37,10 @@ pub struct AirtableSyncedUser {
     pub finished_at: Option<DateTime<Utc>>,
 
     #[serde(rename = "Repl Count")]
-    pub repl_count: Option<isize>,
+    pub repl_count: Option<usize>,
 
     #[serde(rename = "File Count")]
-    pub file_count: Option<isize>,
+    pub file_count: Option<usize>,
 }
 
 pub async fn add_user(user: AirtableSyncedUser) -> bool {

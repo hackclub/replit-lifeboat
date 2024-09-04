@@ -3,7 +3,14 @@ pub mod util;
 
 pub use util::make_zip;
 
-use std::{io::ErrorKind, path::Path, sync::Arc};
+use std::{
+    io::ErrorKind,
+    path::Path,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 use anyhow::{format_err, Result};
 use crosis::{
@@ -88,8 +95,10 @@ pub async fn download(
     download_locations: DownloadLocations,
     ts_offset: i64,
     email: &str,
-) -> Result<DownloadStatus> {
+) -> Result<(DownloadStatus, usize)> {
     debug!("https://replit.com/replid/{}", replinfo.id);
+
+    let file_count = Arc::new(AtomicUsize::new(0));
 
     if let Err(err) = download_crosis(
         client.clone(),
@@ -97,6 +106,7 @@ pub async fn download(
         download_locations,
         ts_offset,
         email,
+        file_count.clone(),
     )
     .await
     {
@@ -115,20 +125,23 @@ pub async fn download(
                 "Error downloading repl zip: {err_download_zip}"
             ))
         } else {
-            Ok(DownloadStatus::NoHistory)
+            Ok((
+                DownloadStatus::NoHistory,
+                file_count.load(Ordering::Relaxed),
+            ))
         }
     } else {
-        Ok(DownloadStatus::Full)
+        Ok((DownloadStatus::Full, file_count.load(Ordering::Relaxed)))
     }
 }
 
 pub async fn download_crosis(
     client: reqwest::Client,
     replinfo: ReplInfo<'_>,
-
     download_locations: DownloadLocations,
     ts_offset: i64,
     email: &str,
+    file_count: Arc<AtomicUsize>,
 ) -> Result<()> {
     let client = Client::new(Box::new(CookieJarConnectionMetadataFetcher {
         client,
@@ -138,7 +151,7 @@ pub async fn download_crosis(
     let close_watcher = client.close_recv.clone();
 
     tokio::select! {
-        res = download_crosis_internal(client, replinfo, download_locations, ts_offset, email) => {
+        res = download_crosis_internal(client, replinfo, download_locations, ts_offset, email, file_count) => {
             res
         }
         data = close_watcher.recv() => {
@@ -157,6 +170,7 @@ async fn download_crosis_internal(
     download_locations: DownloadLocations,
     ts_offset: i64,
     email: &str,
+    file_count: Arc<AtomicUsize>,
 ) -> Result<()> {
     // Will take up to a max of 2 minutes until it fails if ratelimited
     let mut chan0 = client.connect_max_retries_and_backoff(5, 3000, 2).await?;
@@ -395,6 +409,7 @@ async fn download_crosis_internal(
             file.clone(),
             ts_offset,
             permit,
+            file_count.clone(),
         ));
 
         // Poke 👉
@@ -486,6 +501,7 @@ async fn handle_file(
     filename: String,
     global_ts: i64,
     permit: OwnedSemaphorePermit,
+    file_count: Arc<AtomicUsize>,
 ) -> Result<()> {
     // TODO: do other stuff l8r
     if filename.starts_with(".git") {
@@ -669,6 +685,8 @@ async fn handle_file(
     trace!("Downloaded history for {filename}");
 
     drop(permit);
+
+    file_count.fetch_add(1, Ordering::Relaxed);
 
     Ok(())
 }

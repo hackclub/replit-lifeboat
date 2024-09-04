@@ -286,11 +286,12 @@ impl ProfileRepls {
                     errored.push(repl.id);
                     progress.failed.failed += 1;
                 }
-                Ok(Ok(DownloadStatus::NoHistory)) => {
+                Ok(Ok((DownloadStatus::NoHistory, file_count))) => {
                     info!(
                         "Downloaded {}::{} (without history) to {}",
                         repl.id, repl.slug, download_zip
                     );
+                    synced_user.fields.file_count = Some(file_count);
                     no_history_download_count += 1;
                     progress.failed.no_history += 1;
 
@@ -322,8 +323,9 @@ impl ProfileRepls {
                         )
                     }
                 }
-                Ok(Ok(DownloadStatus::Full)) => {
+                Ok(Ok((DownloadStatus::Full, file_count))) => {
                     info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
+                    synced_user.fields.file_count = Some(file_count);
                     successful_download_count += 1;
                     progress.successful += 1;
                 }
