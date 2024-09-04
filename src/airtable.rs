@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 static AIRTABLE: Lazy<Airtable> = Lazy::new(Airtable::new_from_env);
 static TABLE: &str = "tblZABr7qbdjjZo1G";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AirtableSyncedUser {
     #[serde(rename = "ID")]
     pub id: i64,
@@ -31,16 +31,16 @@ pub struct AirtableSyncedUser {
     pub failed_ids: String,
 
     #[serde(rename = "Started At")]
-    pub started_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
 
     #[serde(rename = "Finished At")]
-    pub finished_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
 
     #[serde(rename = "Repl Count")]
-    pub repl_count: isize,
+    pub repl_count: Option<isize>,
 
     #[serde(rename = "File Count")]
-    pub file_count: isize,
+    pub file_count: Option<isize>,
 }
 
 pub async fn add_user(user: AirtableSyncedUser) -> bool {
@@ -129,7 +129,11 @@ pub enum ProcessState {
     #[serde(rename = "NoRepls")]
     NoRepls,
 }
-
+impl Default for ProcessState {
+    fn default() -> Self {
+        Self::Registered
+    }
+}
 impl fmt::Display for ProcessState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {

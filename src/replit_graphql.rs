@@ -175,7 +175,8 @@ impl ProfileRepls {
         mut synced_user: Record<AirtableSyncedUser>,
     ) -> Result<()> {
         synced_user.fields.status = ProcessState::CollectingRepls;
-        synced_user.fields.started_at = chrono::offset::Utc::now();
+        synced_user.fields.started_at = Some(chrono::offset::Utc::now());
+        synced_user.fields.repl_count = Some(0);
         airtable::update_records(vec![synced_user.clone()]).await?;
 
         let client = create_client(token, None)?;
@@ -334,7 +335,7 @@ impl ProfileRepls {
                     "Download stats ({}): {successful_download_count} ({no_history_download_count} without history) correctly downloaded out of {total_download_count} total attempted downloads", current_user.username
                 );
 
-            synced_user.fields.repl_count += 1;
+            synced_user.fields.repl_count.map(|mut v| v += 1);
             progress.report(&current_user);
         }
 
@@ -429,7 +430,7 @@ We've been notified, and will fix this! We'll get back to you about this.",
         if !errored.is_empty() {
             synced_user.fields.failed_ids = errored.join(",");
         }
-        synced_user.fields.finished_at = chrono::offset::Utc::now();
+        synced_user.fields.finished_at = Some(chrono::offset::Utc::now());
         airtable::update_records(vec![synced_user]).await?;
 
         Ok(())
