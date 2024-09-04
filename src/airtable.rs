@@ -1,5 +1,6 @@
 use airtable_api::{Airtable, Record};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,18 @@ pub struct AirtableSyncedUser {
 
     #[serde(rename = "Failed Repl IDs")]
     pub failed_ids: String,
+
+    #[serde(rename = "Started At")]
+    pub started_at: DateTime<Utc>,
+
+    #[serde(rename = "Finished At")]
+    pub finished_at: DateTime<Utc>,
+
+    #[serde(rename = "Repl Count")]
+    pub repl_count: isize,
+
+    #[serde(rename = "File Count")]
+    pub file_count: isize,
 }
 
 pub async fn add_user(user: AirtableSyncedUser) -> bool {
