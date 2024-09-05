@@ -332,10 +332,11 @@ impl ProfileRepls {
             total_download_count += 1;
 
             info!(
-                    "Download stats ({}): {successful_download_count} ({no_history_download_count} without history) correctly downloaded out of {total_download_count} total attempted downloads", current_user.username
-                );
+                "Download stats ({}): {successful_download_count} ({no_history_download_count} without history) correctly downloaded out of {total_download_count} total attempted downloads", current_user.username
+            );
 
             synced_user.fields.repl_count += 1;
+            airtable::update_records(vec![synced_user.clone()]).await?;
             progress.report(&current_user);
         }
 
