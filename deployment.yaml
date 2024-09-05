@@ -50,5 +50,5 @@ spec:
             - name: LOOPS_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: storage-bucket
+                  name: loops
                   key: LOOPS_API_KEY
