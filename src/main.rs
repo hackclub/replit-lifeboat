@@ -45,13 +45,15 @@ impl SignupResponse {
 async fn rocket() -> _ {
     env_logger::init();
     dotenv::dotenv().ok();
-    tokio::spawn(async {
-        loop {
-            if let Err(err) = airtable_loop().await {
-                error!("Airtable internal loop error (restarting): {err}");
-            }
-        }
-    });
+
+    airtable::aggregates().await.expect("fialed to get aggs");
+    // tokio::spawn(async {
+    //     loop {
+    //         if let Err(err) = airtable_loop().await {
+    //             error!("Airtable internal loop error (restarting): {err}");
+    //         }
+    //     }
+    // });
 
     rocket::build()
         .mount("/", routes![hello, signup, get_progress])
@@ -173,7 +175,7 @@ async fn airtable_loop() -> Result<()> {
     loop {
         let mut user;
         'mainloop: loop {
-            trace!("Getting airtable records");
+            info!("Getting airtable records");
             let records = airtable::get_records().await?;
             for record in records {
                 if record.fields.status == ProcessState::Registered {
@@ -181,7 +183,7 @@ async fn airtable_loop() -> Result<()> {
                     break 'mainloop;
                 }
             }
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         if let Err(err) = ProfileRepls::download(&user.fields.token, user.clone()).await {

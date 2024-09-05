@@ -686,6 +686,7 @@ async fn handle_file(
 
     drop(permit);
 
+    log::info!("{} file processed", file_count.load(Ordering::Relaxed));
     file_count.fetch_add(1, Ordering::Relaxed);
 
     Ok(())

@@ -1,8 +1,11 @@
 use airtable_api::{Airtable, Record};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use dotenv::var;
 use once_cell::sync::Lazy;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 static AIRTABLE: Lazy<Airtable> = Lazy::new(Airtable::new_from_env);
 static TABLE: &str = "tblZABr7qbdjjZo1G";
@@ -37,10 +40,10 @@ pub struct AirtableSyncedUser {
     pub finished_at: Option<DateTime<Utc>>,
 
     #[serde(rename = "Repl Count")]
-    pub repl_count: Option<usize>,
+    pub repl_count: usize,
 
     #[serde(rename = "File Count")]
-    pub file_count: Option<usize>,
+    pub file_count: usize,
 }
 
 pub async fn add_user(user: AirtableSyncedUser) -> bool {
@@ -69,6 +72,10 @@ pub async fn get_records() -> Result<Vec<Record<AirtableSyncedUser>>> {
                 "Status",
                 "R2 Link",
                 "Failed Repl IDs",
+                "Started At",
+                "Finished At",
+                "Repl Count",
+                "File Count",
             ],
         )
         .await?;
@@ -82,6 +89,52 @@ pub async fn get_records() -> Result<Vec<Record<AirtableSyncedUser>>> {
 
 pub async fn update_records(records: Vec<Record<AirtableSyncedUser>>) -> Result<()> {
     AIRTABLE.update_records(TABLE, records).await?;
+
+    Ok(())
+}
+
+pub async fn aggregates() -> Result<()> {
+    let url = format!(
+        "https://api.airtable.com/v0/{}/{}/aggregate",
+        var("AIRTABLE_BASE_ID")?,
+        TABLE
+    );
+
+    // Set up headers
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", var("AIRTABLE_API_KEY")?))?,
+    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+    // Payload for the sum aggregation
+    let payload = json!({
+        "aggregations": [
+            {
+                "aggregator": "sum",
+                "field": "File Count"
+            }
+        ]
+    });
+
+    // Create a client and send the request
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .headers(headers)
+        .json(&payload)
+        .send()
+        .await?;
+
+    // Check if the request was successful
+    if response.status().is_success() {
+        let data: Value = response.json().await?;
+        let column_sum = data["results"][0]["sum"].as_f64().unwrap_or(0.0);
+        println!("The sum of {} is: {}", "File Count", column_sum);
+    } else {
+        println!("Error: {}, {:?}", response.status(), response.text().await?);
+    }
 
     Ok(())
 }

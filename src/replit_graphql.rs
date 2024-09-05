@@ -176,7 +176,6 @@ impl ProfileRepls {
     ) -> Result<()> {
         synced_user.fields.status = ProcessState::CollectingRepls;
         synced_user.fields.started_at = Some(chrono::offset::Utc::now());
-        synced_user.fields.repl_count = Some(0);
         airtable::update_records(vec![synced_user.clone()]).await?;
 
         let client = create_client(token, None)?;
@@ -291,7 +290,11 @@ impl ProfileRepls {
                         "Downloaded {}::{} (without history) to {}",
                         repl.id, repl.slug, download_zip
                     );
-                    synced_user.fields.file_count = Some(file_count);
+                    synced_user.fields.file_count += file_count;
+                    info!(
+                        "nohist YO! {file_count}, total: {:?}",
+                        synced_user.fields.file_count
+                    );
                     no_history_download_count += 1;
                     progress.failed.no_history += 1;
 
@@ -325,7 +328,11 @@ impl ProfileRepls {
                 }
                 Ok(Ok((DownloadStatus::Full, file_count))) => {
                     info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
-                    synced_user.fields.file_count = Some(file_count);
+                    synced_user.fields.file_count += file_count;
+                    info!(
+                        "hist YO! {file_count}, total: {:?}",
+                        synced_user.fields.file_count
+                    );
                     successful_download_count += 1;
                     progress.successful += 1;
                 }
@@ -337,12 +344,13 @@ impl ProfileRepls {
                     "Download stats ({}): {successful_download_count} ({no_history_download_count} without history) correctly downloaded out of {total_download_count} total attempted downloads", current_user.username
                 );
 
-            synced_user.fields.repl_count.map(|mut v| v += 1);
+            synced_user.fields.repl_count += 1;
             progress.report(&current_user);
         }
 
         progress.completed = true;
         progress.report(&current_user);
+        airtable::update_records(vec![synced_user.clone()]).await?;
 
         let path = format!("repls/{}", current_user.username);
         make_zip(path.clone(), format!("repls/{}.zip", current_user.username)).await?;
