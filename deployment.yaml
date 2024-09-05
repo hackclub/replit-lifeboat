@@ -22,16 +22,6 @@ spec:
               value: "debug"
             - name: ROCKET_ADDRESS
               value: "0.0.0.0"
-            - name: GMAIL_SMTP_USER
-              valueFrom:
-                secretKeyRef:
-                  name: mailer-user
-                  key: GMAIL_SMTP_USER
-            - name: GMAIL_SMTP_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: mailer-user
-                  key: GMAIL_SMTP_PASS
             - name: AIRTABLE_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -57,3 +47,8 @@ spec:
                 secretKeyRef:
                   name: storage-bucket
                   key: R2_ENDPOINT
+            - name: LOOPS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: storage-bucket
+                  key: LOOPS_API_KEY

@@ -1,6 +1,6 @@
 [package]
 name = "replit-takeout"
-version = "1.2.0"
+version = "1.4.0"
 edition = "2021"
 authors = ["Ben Dixon <malted@malted.dev>"]
 
@@ -16,7 +16,6 @@ dotenv = "0.15.0"
 env_logger = "0.11.5"
 flume = "0.11.0"
 graphql_client = { version = "0.14.0", features = ["reqwest"] }
-lettre = { version = "0.11.7", features = ["tokio1", "tokio1-native-tls"] }
 kanal = { version = "0.1.0-pre8", default-features = false, features = ["async"] }
 git2 = "0.19.0"
 log = "0.4.22"
@@ -35,6 +34,5 @@ async-compression = { version = "0.4.12" }
 aws-region = "0.25.4"
 rust-s3 = "0.34.0"
 futures = "0.3.30"
-askama = "0.12.1"
 base64 = "0.22.1"
 rand = "0.8.5"

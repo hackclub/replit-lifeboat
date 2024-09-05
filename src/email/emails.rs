@@ -1,38 +1,48 @@
 use anyhow::Result;
-use askama::Template;
-use lettre::message::header::ContentType;
+use once_cell::sync::Lazy;
+use reqwest::{
+    header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE},
+    Client,
+};
+use serde_json::{json, Value};
 
-#[derive(Template)]
-#[template(path = "test.html")]
-pub struct TestTemplate<'a> {
-    pub title: &'a str,
-    pub name: &'a str,
+static LOOPS_CLIENT: Lazy<Client> = Lazy::new(|| {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!(
+            "Bearer {}",
+            dotenv::var("LOOPS_API_KEY").expect("a loops api key in the env")
+        ))
+        .expect("a built str header value"),
+    );
+
+    Client::builder()
+        .user_agent(crate::utils::random_user_agent())
+        .default_headers(headers.clone())
+        .build()
+        .expect("a built loops client")
+});
+static LOOPS_TX_URL: &str = "https://app.loops.so/api/v1/transactional";
+
+async fn send_loop(to: &str, payload: &Value) -> Result<reqwest::Response, reqwest::Error> {
+    LOOPS_CLIENT.post(LOOPS_TX_URL).json(&payload).send().await
 }
 
-#[derive(Template)]
-#[template(path = "greet.html")]
-pub struct GreetTemplate<'a> {
-    pub username: &'a str,
-}
 pub async fn send_greet_email(to: &str, username: &str) -> Result<()> {
-    super::send_email(
-        to,
-        "Your Replit⠕ export is on its way!".to_string(),
-        GreetTemplate { username }.render()?,
-        ContentType::TEXT_HTML,
-    )
-    .await
+    let payload = json!({
+      "transactionalId": "cm0pegyzg01xquhjkf7r3fh85",
+      "email": to,
+      "dataVariables": {
+        "replitUsername": username
+      }
+    });
+
+    send_loop(to, &payload).await?;
+
+    Ok(())
 }
 
-#[derive(Template)]
-#[template(path = "partial_success.html")]
-pub struct PartialSuccessTemplate<'a> {
-    pub username: &'a str,
-    pub repl_count_success: usize,
-    pub repl_count_total: usize,
-    pub link_export_download: &'a str,
-    pub repl_ids_failed: &'a Vec<String>,
-}
 pub async fn send_partial_success_email(
     to: &str,
     username: &str,
@@ -40,45 +50,74 @@ pub async fn send_partial_success_email(
     repl_ids_failed: &Vec<String>,
     link_export_download: &str,
 ) -> Result<()> {
-    super::send_email(
-        to,
-        "Your Replit⠕ export has (mostly) arrived!".to_string(),
-        PartialSuccessTemplate {
-            username,
-            repl_count_success: repl_count_total - repl_ids_failed.len(),
-            repl_count_total,
-            link_export_download,
-            repl_ids_failed,
-        }
-        .render()?,
-        ContentType::TEXT_HTML,
-    )
-    .await
+    let failed_repl_links = repl_ids_failed
+        .iter()
+        .map(|id| format!("https://replit.com/replid/{id}"))
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let payload = json!({
+      "transactionalId": "cm0pgg7bw002gp8uk5ufqfvov",
+      "email": to,
+      "dataVariables": {
+        "replitUsername": username,
+        "replCountSuccess": repl_count_total - repl_ids_failed.len(),
+        "replCountTotal": repl_count_total,
+        "linkExportDownload": link_export_download,
+        "failedReplLinks": failed_repl_links
+      }
+    });
+
+    send_loop(to, &payload).await?;
+
+    Ok(())
 }
 
-#[derive(Template)]
-#[template(path = "all_success.html")]
-pub struct SuccessTemplate<'a> {
-    pub username: &'a str,
-    pub repl_count_total: usize,
-    pub link_export_download: &'a str,
-}
 pub async fn send_success_email(
     to: &str,
     username: &str,
     repl_count_total: usize,
     link_export_download: &str,
 ) -> Result<()> {
-    super::send_email(
-        to,
-        "Your Replit⠕ export has arrived!".to_string(),
-        SuccessTemplate {
-            username,
-            repl_count_total,
-            link_export_download,
-        }
-        .render()?,
-        ContentType::TEXT_HTML,
-    )
-    .await
+    let payload = json!({
+      "transactionalId": "cm0pg42wh002u3ml1d4et51zp",
+      "email": to,
+      "dataVariables": {
+        "replitUsername": username,
+        "replCountTotal": repl_count_total,
+        "link_export_download": link_export_download
+      }
+    });
+
+    send_loop(to, &payload).await?;
+
+    Ok(())
+}
+
+pub async fn send_failed_no_repls_email(to: &str, username: &str) -> Result<()> {
+    let payload = json!({
+      "transactionalId": "cm0pgqger00bbo6ie7wyia98y",
+      "email": to,
+      "dataVariables": {
+        "replitUsername": username
+      }
+    });
+
+    send_loop(&to, &payload).await?;
+
+    Ok(())
+}
+
+pub async fn send_failure_email(to: &str, username: &str) -> Result<()> {
+    let payload = json!({
+      "transactionalId": "cm0pgxpy303hf53mv955aoqls",
+      "email": to,
+      "dataVariables": {
+        "replitUsername": username
+      }
+    });
+
+    send_loop(&to, &payload).await?;
+
+    Ok(())
 }

@@ -206,17 +206,16 @@ impl ProfileRepls {
         progress.report(&current_user); // Report the user's progress.
 
         if repl_count == 0 {
-            if let Err(err) = crate::email::send_email(
+            if let Err(err) = crate::email::emails::send_failed_no_repls_email(
                 &synced_user.fields.email,
-                "Your Replit⠕ export failed".into(),
-                format!(
-                    "Hey {}, you tried to export your repls, but you don't have any repls - what are you doing? Are you okay?? :)",
-                    synced_user.fields.username
-                ),
-                lettre::message::header::ContentType::TEXT_PLAIN,
-            ).await
+                &synced_user.fields.username,
+            )
+            .await
             {
-                error!("Couldn't send the 0 repl email to {}: {:?}", synced_user.fields.email, err);
+                error!(
+                    "Couldn't send the 0 repl email to {}: {:?}",
+                    synced_user.fields.email, err
+                );
             }
 
             synced_user.fields.status = ProcessState::NoRepls;
@@ -418,15 +417,9 @@ impl ProfileRepls {
             // Shit's fucked.
             synced_user.fields.status = ProcessState::Errored;
 
-            if let Err(err) = crate::email::send_email(
+            if let Err(err) = crate::email::emails::send_failure_email(
                 &synced_user.fields.email,
-                "Your Replit⠕ export failed".into(),
-                format!(
-                    "Hey {}, We have run into an issue processing your Replit⠕ takeout 🥡.
-We've been notified, and will fix this! We'll get back to you about this.",
-                    synced_user.fields.username
-                ),
-                lettre::message::header::ContentType::TEXT_PLAIN,
+                &synced_user.fields.username,
             )
             .await
             {

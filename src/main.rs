@@ -9,7 +9,6 @@ use base64::{
 use rand::Rng;
 use replit_takeout::{
     airtable::{self, ProcessState},
-    email::test_routes::*,
     replit_graphql::{ExportProgress, ProfileRepls, QuickUser},
 };
 use rocket::serde::json::Json;
@@ -46,26 +45,17 @@ async fn rocket() -> _ {
     env_logger::init();
     dotenv::dotenv().ok();
 
-    airtable::aggregates().await.expect("fialed to get aggs");
-    // tokio::spawn(async {
-    //     loop {
-    //         if let Err(err) = airtable_loop().await {
-    //             error!("Airtable internal loop error (restarting): {err}");
-    //         }
-    //     }
-    // });
+    // airtable::aggregates().await.expect("fialed to get aggs");
+    tokio::spawn(async {
+        loop {
+            if let Err(err) = airtable_loop().await {
+                error!("Airtable internal loop error (restarting): {err}");
+            }
+        }
+    });
 
     rocket::build()
         .mount("/", routes![hello, signup, get_progress])
-        .mount(
-            "/test-email",
-            routes![
-                test_test_email,
-                greet_test_email,
-                partial_success_test_email,
-                success_test_email
-            ],
-        )
         .manage(State {
             token_to_id_cache: tokio::sync::RwLock::new(HashMap::new()),
         })
@@ -183,7 +173,7 @@ async fn airtable_loop() -> Result<()> {
                     break 'mainloop;
                 }
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
         }
 
         if let Err(err) = ProfileRepls::download(&user.fields.token, user.clone()).await {
