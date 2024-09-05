@@ -17,7 +17,6 @@ RUN cargo build --release
 RUN rm src/*.rs
 
 COPY ./src ./src
-COPY ./templates ./templates
 
 # Build for release
 RUN rm ./target/release/deps/replit_takeout*
