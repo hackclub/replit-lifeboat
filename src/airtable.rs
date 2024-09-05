@@ -81,6 +81,7 @@ pub async fn get_records() -> Result<Vec<Record<AirtableSyncedUser>>> {
                 "Finished At",
                 "Repl Count",
                 "File Count",
+                "Statistics",
             ],
         )
         .await?;
