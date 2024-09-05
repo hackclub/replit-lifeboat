@@ -73,8 +73,8 @@ async fn rocket() -> _ {
         .manage(State {
             token_to_id_cache: tokio::sync::RwLock::new(HashMap::new()),
             stats_cache: tokio::sync::RwLock::new((
-                AggregateStats::default(),
-                chrono::offset::Utc::now(),
+                airtable::aggregates().await.expect("airtable aggregates"),
+                Utc::now(),
             )),
         })
         .attach(cors.to_cors().unwrap())
@@ -186,6 +186,7 @@ async fn get_stats(state: &rocket::State<State>) -> Option<Json<AggregateStats>>
 
     if seconds_ago > 5 {
         state.stats_cache.write().await.0 = airtable::aggregates().await.ok()?;
+        state.stats_cache.write().await.1 = Utc::now();
         info!(
             "Refreshing stats cache ({seconds_ago}) :): {:?}",
             state.stats_cache.read().await.0
@@ -197,8 +198,7 @@ async fn get_stats(state: &rocket::State<State>) -> Option<Json<AggregateStats>>
         )
     }
 
-    let stats = state.stats_cache.read().await.0.clone();
-    Some(Json(stats))
+    Some(Json(state.stats_cache.read().await.0))
 }
 
 async fn airtable_loop() -> Result<()> {
