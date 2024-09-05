@@ -107,6 +107,7 @@ async fn signup(token: String, email: String) -> Json<SignupResponse> {
         status: airtable::ProcessState::Registered,
         r2_link: String::from("https://example.com"),
         failed_ids: String::from("none"),
+        statistics: vec!["recpWEjc0zLoKEtZP".into()],
         ..Default::default()
     })
     .await

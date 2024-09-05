@@ -1,5 +1,5 @@
 use airtable_api::{Airtable, Record};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use dotenv::var;
 use once_cell::sync::Lazy;
@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 
 static AIRTABLE: Lazy<Airtable> = Lazy::new(Airtable::new_from_env);
 static TABLE: &str = "tblZABr7qbdjjZo1G";
+static STATISTICS_TABLE: &str = "tbl2RjULxUSRXJZ39";
+static STATISTICS_RECORD: &str = "recpWEjc0zLoKEtZP";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AirtableSyncedUser {
@@ -44,6 +46,9 @@ pub struct AirtableSyncedUser {
 
     #[serde(rename = "File Count")]
     pub file_count: usize,
+
+    #[serde(rename = "Statistics")]
+    pub statistics: Vec<String>,
 }
 
 pub async fn add_user(user: AirtableSyncedUser) -> bool {
@@ -107,9 +112,10 @@ pub async fn aggregates() -> Result<AggregateStats> {
     );
 
     let url = format!(
-        "https://api.airtable.com/v0/{}/{}",
+        "https://api.airtable.com/v0/{}/{}/{}",
         var("AIRTABLE_BASE_ID")?,
-        TABLE
+        STATISTICS_TABLE,
+        STATISTICS_RECORD
     );
 
     let response = client
@@ -120,27 +126,22 @@ pub async fn aggregates() -> Result<AggregateStats> {
         .json::<Value>()
         .await?;
 
-    let records = response["records"]
-        .as_array()
-        .context("failed to parse records")?;
-
-    let file_count: u64 = records
-        .iter()
-        .map(|r| r["fields"]["File Count"].as_u64().unwrap_or(0))
-        .sum();
-
-    let repl_count: u64 = records
-        .iter()
-        .map(|r| r["fields"]["Repl Count"].as_u64().unwrap_or(0))
-        .sum();
-
-    Ok(AggregateStats {
-        file_count,
-        repl_count,
-    })
+    match response.as_object().expect("msg").get("fields") {
+        Some(f) => Ok(AggregateStats {
+            file_count: f
+                .get("Total Files Processed")
+                .unwrap_or(&json!(0))
+                .as_u64()
+                .unwrap_or(0),
+            repl_count: f
+                .get("Total Repls Processed")
+                .unwrap_or(&json!(0))
+                .as_u64()
+                .unwrap_or(0),
+        }),
+        None => Err(anyhow!("No fields")),
+    }
 }
-
-use std::fmt;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ProcessState {
@@ -188,8 +189,8 @@ impl Default for ProcessState {
         Self::Registered
     }
 }
-impl fmt::Display for ProcessState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for ProcessState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = match self {
             ProcessState::Registered => "Registered",
             ProcessState::CollectingRepls => "Collecting repls",
