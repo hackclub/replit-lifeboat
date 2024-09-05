@@ -6,6 +6,7 @@ use base64::{
     engine::{self, general_purpose},
     Engine as _,
 };
+use chrono::{DateTime, Utc};
 use rand::Rng;
 use replit_takeout::{
     airtable::{self, AggregateStats, ProcessState},
@@ -19,6 +20,7 @@ mod r2;
 
 struct State {
     token_to_id_cache: tokio::sync::RwLock<HashMap<String, i64>>, // <token, id>
+    stats_cache: tokio::sync::RwLock<(AggregateStats, DateTime<Utc>)>, // <stats, updated_at>
 }
 
 #[derive(serde::Serialize)]
@@ -70,6 +72,10 @@ async fn rocket() -> _ {
         .mount("/", routes![hello, signup, get_progress, get_stats])
         .manage(State {
             token_to_id_cache: tokio::sync::RwLock::new(HashMap::new()),
+            stats_cache: tokio::sync::RwLock::new((
+                AggregateStats::default(),
+                chrono::offset::Utc::now(),
+            )),
         })
         .attach(cors.to_cors().unwrap())
 }
@@ -173,8 +179,23 @@ async fn get_progress(token: String, state: &rocket::State<State>) -> Option<Jso
 }
 
 #[get("/stats")]
-async fn get_stats() -> Option<Json<AggregateStats>> {
-    Some(Json(airtable::aggregates().await.ok()?))
+async fn get_stats(state: &rocket::State<State>) -> Option<Json<AggregateStats>> {
+    let seconds_ago = Utc::now()
+        .signed_duration_since(state.stats_cache.read().await.1)
+        .num_seconds();
+
+    if seconds_ago > 5 {
+        state.stats_cache.write().await.0 = airtable::aggregates().await.ok()?;
+        info!(
+            "Refreshing stats cache :): {:?}",
+            state.stats_cache.read().await.0
+        )
+    } else {
+        info!("Hit stats cache :): {:?}", state.stats_cache.read().await.0)
+    }
+
+    let stats = state.stats_cache.read().await.0.clone();
+    Some(Json(stats))
 }
 
 async fn airtable_loop() -> Result<()> {

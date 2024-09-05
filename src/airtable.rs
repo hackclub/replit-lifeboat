@@ -99,7 +99,7 @@ pub async fn update_records(records: Vec<Record<AirtableSyncedUser>>) -> Result<
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct AggregateStats {
     file_count: u64,
     repl_count: u64,
