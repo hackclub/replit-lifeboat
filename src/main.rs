@@ -11,7 +11,9 @@ use replit_takeout::{
     airtable::{self, AggregateStats, ProcessState},
     replit_graphql::{ExportProgress, ProfileRepls, QuickUser},
 };
+use rocket::http::Method;
 use rocket::serde::json::Json;
+use rocket_cors::{AllowedOrigins, CorsOptions};
 use std::{collections::HashMap, time::Duration};
 mod r2;
 
@@ -54,11 +56,22 @@ async fn rocket() -> _ {
         }
     });
 
+    let cors = CorsOptions::default()
+        .allowed_origins(AllowedOrigins::all())
+        .allowed_methods(
+            vec![Method::Get, Method::Post, Method::Patch]
+                .into_iter()
+                .map(From::from)
+                .collect(),
+        )
+        .allow_credentials(true);
+
     rocket::build()
         .mount("/", routes![hello, signup, get_progress, get_stats])
         .manage(State {
             token_to_id_cache: tokio::sync::RwLock::new(HashMap::new()),
         })
+        .attach(cors.to_cors().unwrap())
 }
 
 #[get("/")]
