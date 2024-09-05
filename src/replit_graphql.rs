@@ -290,10 +290,6 @@ impl ProfileRepls {
                         repl.id, repl.slug, download_zip
                     );
                     synced_user.fields.file_count += file_count;
-                    info!(
-                        "nohist YO! {file_count}, total: {:?}",
-                        synced_user.fields.file_count
-                    );
                     no_history_download_count += 1;
                     progress.failed.no_history += 1;
 
@@ -328,10 +324,6 @@ impl ProfileRepls {
                 Ok(Ok((DownloadStatus::Full, file_count))) => {
                     info!("Downloaded {}::{} to {}", repl.id, repl.slug, main_location);
                     synced_user.fields.file_count += file_count;
-                    info!(
-                        "hist YO! {file_count}, total: {:?}",
-                        synced_user.fields.file_count
-                    );
                     successful_download_count += 1;
                     progress.successful += 1;
                 }

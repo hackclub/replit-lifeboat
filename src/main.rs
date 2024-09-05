@@ -165,7 +165,7 @@ async fn airtable_loop() -> Result<()> {
     loop {
         let mut user;
         'mainloop: loop {
-            info!("Getting airtable records");
+            debug!("Getting airtable records");
             let records = airtable::get_records().await?;
             for record in records {
                 if record.fields.status == ProcessState::Registered {
