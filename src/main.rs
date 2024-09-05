@@ -8,7 +8,7 @@ use base64::{
 };
 use rand::Rng;
 use replit_takeout::{
-    airtable::{self, ProcessState},
+    airtable::{self, AggregateStats, ProcessState},
     replit_graphql::{ExportProgress, ProfileRepls, QuickUser},
 };
 use rocket::serde::json::Json;
@@ -55,7 +55,7 @@ async fn rocket() -> _ {
     });
 
     rocket::build()
-        .mount("/", routes![hello, signup, get_progress])
+        .mount("/", routes![hello, signup, get_progress, get_stats])
         .manage(State {
             token_to_id_cache: tokio::sync::RwLock::new(HashMap::new()),
         })
@@ -156,6 +156,11 @@ async fn get_progress(token: String, state: &rocket::State<State>) -> Option<Jso
     } else {
         None
     }
+}
+
+#[get("/stats")]
+async fn get_stats() -> Option<Json<AggregateStats>> {
+    Some(Json(airtable::aggregates().await.ok()?))
 }
 
 async fn airtable_loop() -> Result<()> {

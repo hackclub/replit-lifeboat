@@ -1,5 +1,5 @@
 use airtable_api::{Airtable, Record};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dotenv::var;
 use once_cell::sync::Lazy;
@@ -93,50 +93,51 @@ pub async fn update_records(records: Vec<Record<AirtableSyncedUser>>) -> Result<
     Ok(())
 }
 
-pub async fn aggregates() -> Result<()> {
-    let url = format!(
-        "https://api.airtable.com/v0/{}/{}/aggregate",
-        var("AIRTABLE_BASE_ID")?,
-        TABLE
-    );
-
-    // Set up headers
+#[derive(Debug, Serialize)]
+pub struct AggregateStats {
+    file_count: u64,
+    repl_count: u64,
+}
+pub async fn aggregates() -> Result<AggregateStats> {
+    let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
     headers.insert(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("Bearer {}", var("AIRTABLE_API_KEY")?))?,
     );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-    // Payload for the sum aggregation
-    let payload = json!({
-        "aggregations": [
-            {
-                "aggregator": "sum",
-                "field": "File Count"
-            }
-        ]
-    });
+    let url = format!(
+        "https://api.airtable.com/v0/{}/{}",
+        var("AIRTABLE_BASE_ID")?,
+        TABLE
+    );
 
-    // Create a client and send the request
-    let client = reqwest::Client::new();
     let response = client
-        .post(&url)
+        .get(&url)
         .headers(headers)
-        .json(&payload)
         .send()
+        .await?
+        .json::<Value>()
         .await?;
 
-    // Check if the request was successful
-    if response.status().is_success() {
-        let data: Value = response.json().await?;
-        let column_sum = data["results"][0]["sum"].as_f64().unwrap_or(0.0);
-        println!("The sum of {} is: {}", "File Count", column_sum);
-    } else {
-        println!("Error: {}, {:?}", response.status(), response.text().await?);
-    }
+    let records = response["records"]
+        .as_array()
+        .context("failed to parse records")?;
 
-    Ok(())
+    let file_count: u64 = records
+        .iter()
+        .map(|r| r["fields"]["File Count"].as_u64().unwrap_or(0))
+        .sum();
+
+    let repl_count: u64 = records
+        .iter()
+        .map(|r| r["fields"]["Repl Count"].as_u64().unwrap_or(0))
+        .sum();
+
+    Ok(AggregateStats {
+        file_count,
+        repl_count,
+    })
 }
 
 use std::fmt;
