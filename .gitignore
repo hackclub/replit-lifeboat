@@ -3,3 +3,7 @@ repls
 repls2
 .DS_Store
 .env
+kustomization.yaml
+namespace.yaml
+rbac.yaml
+vector-agent.yaml
