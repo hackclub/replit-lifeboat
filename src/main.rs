@@ -187,11 +187,14 @@ async fn get_stats(state: &rocket::State<State>) -> Option<Json<AggregateStats>>
     if seconds_ago > 5 {
         state.stats_cache.write().await.0 = airtable::aggregates().await.ok()?;
         info!(
-            "Refreshing stats cache :): {:?}",
+            "Refreshing stats cache ({seconds_ago}) :): {:?}",
             state.stats_cache.read().await.0
         )
     } else {
-        info!("Hit stats cache :): {:?}", state.stats_cache.read().await.0)
+        info!(
+            "Hit stats cache ({seconds_ago}) :): {:?}",
+            state.stats_cache.read().await.0
+        )
     }
 
     let stats = state.stats_cache.read().await.0.clone();
