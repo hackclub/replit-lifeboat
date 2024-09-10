@@ -10,7 +10,7 @@ use reqwest::{
 use std::sync::Arc;
 use std::time::Duration;
 use time::OffsetDateTime;
-use tokio::fs;
+use tokio::{fs, time::sleep};
 
 use serde::{Deserialize, Serialize};
 
@@ -118,58 +118,76 @@ type DateTime = String;
 )]
 pub struct ProfileRepls;
 impl ProfileRepls {
-    // /// Get one page of repls.
-    // #[deprecated]
-    // async fn fetch(
-    //     token: &String,
-    //     id: i64,
-    //     client_opt: Option<Client>,
-    //     after: Option<String>,
-    // ) -> Result<(
-    //     Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
-    //     Option<String>,
-    // )> {
-    //     let client = create_client(token, client_opt)?;
+    /// Get one page of repls.
+    #[deprecated]
+    pub async fn fetch(
+        token: &String,
+        user_id: i64,
+        client_opt: Option<Client>,
+    ) -> Result<Vec<profile_repls::ProfileReplsUserProfileReplsItems>> {
+        let mut all_repls = Vec::new();
+        let mut after = None;
+        let client = create_client(token, client_opt)?;
 
-    //     let repls_query = ProfileRepls::build_query(profile_repls::Variables { id, after });
+        loop {
+            let (repls, next_page) = Self::fetch_page(&client, user_id, after.clone()).await?;
+            all_repls.extend(repls);
 
-    //     let repls_data: String = client
-    //         .post(REPLIT_GQL_URL)
-    //         .json(&repls_query)
-    //         .send()
-    //         .await?
-    //         .text()
-    //         .await?;
-    //     debug!(
-    //         "{}:{} Raw text repl data: {repls_data}",
-    //         std::line!(),
-    //         std::column!()
-    //     );
+            if let Some(next_cursor) = next_page {
+                after = Some(next_cursor);
+                // Add a small delay between requests to avoid rate limiting
+                sleep(Duration::from_millis(100)).await;
+            } else {
+                break;
+            }
+        }
 
-    //     let repls_data_result =
-    //         match serde_json::from_str::<Response<profile_repls::ResponseData>>(&repls_data) {
-    //             Ok(data) => data.data,
-    //             Err(e) => {
-    //                 error!("Failed to deserialize JSON: {}", e);
-    //                 return Err(anyhow::Error::new(e));
-    //             }
-    //         };
+        info!("Fetched a total of {} repls", all_repls.len());
+        Ok(all_repls)
+    }
 
-    //     let next_page = repls_data_result
-    //         .as_ref()
-    //         .and_then(|data| {
-    //             data.user
-    //                 .as_ref()
-    //                 .map(|user| user.profile_repls.page_info.next_cursor.clone())
-    //         })
-    //         .ok_or(anyhow::Error::msg("Page Info not found during download"))?;
+    async fn fetch_page(
+        client: &Client,
+        user_id: i64,
+        after: Option<String>,
+    ) -> Result<(
+        Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
+        Option<String>,
+    )> {
+        let repls_query = ProfileRepls::build_query(profile_repls::Variables { user_id, after });
+        let repls_data: String = client
+            .post(REPLIT_GQL_URL)
+            .json(&repls_query)
+            .send()
+            .await?
+            .text()
+            .await?;
 
-    //     let repls = repls_data_result
-    //         .and_then(|data| data.user.map(|user| user.profile_repls.items))
-    //         .ok_or(anyhow::Error::msg("Repls not found during download"))?;
+        debug!(
+            "{}:{} Raw text repl data: {repls_data}",
+            std::line!(),
+            std::column!()
+        );
 
-    //     Ok((repls, next_page))
-    // }
+        let repls_data_result: Response<profile_repls::ResponseData> =
+            serde_json::from_str(&repls_data).map_err(|e| {
+                error!("Failed to deserialize JSON: {}", e);
+                anyhow::Error::new(e)
+            })?;
+
+        let data = repls_data_result
+            .data
+            .ok_or_else(|| anyhow::Error::msg("No data returned from API"))?;
+
+        let user = data
+            .user
+            .ok_or_else(|| anyhow::Error::msg("User data not found"))?;
+
+        let next_page = user.profile_repls.page_info.next_cursor;
+        let repls = user.profile_repls.items;
+
+        Ok((repls, next_page))
+    }
 
     pub async fn download(
         token: &String,

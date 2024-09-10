@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use dotenv::var;
 use log::error;
-use replit_takeout::replit::repls::Repl;
+use replit_takeout::{replit::repls::Repl, replit_graphql::ProfileRepls};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -12,18 +12,29 @@ async fn main() -> Result<()> {
 
     let token = var("REPLIT_TEST_TOKEN")?;
 
-    let repls = Repl::fetch(&token, None).await.expect("some repls");
-    error!("got {} repls", repls.len());
+    //#region New method
+    // {
+    //     let repls = Repl::fetch(&token, None).await?;
+    //     error!("got {} repls", repls.len());
 
-    let mut map: HashMap<String, Repl> = HashMap::new();
+    //     let mut map: HashMap<String, Repl> = HashMap::new();
 
-    for repl in repls {
-        if map.contains_key(&repl.id) {
-            log::error!("ALREADY CONTAINS {:?}", repl.clone());
-        }
+    //     for repl in repls {
+    //         if map.contains_key(&repl.id) {
+    //             log::error!("ALREADY CONTAINS {:?}", repl.clone());
+    //         }
 
-        map.insert(repl.id.clone(), repl);
+    //         map.insert(repl.id.clone(), repl);
+    //     }
+    // }
+    //#endregion
+
+    //#region Old, fixed method
+    {
+        let repls = ProfileRepls::fetch(&token, 222834, None).await?;
+        println!("{:#?}", repls.len());
     }
+    //#endregion
 
     Ok(())
 }

@@ -1,24 +1,24 @@
-query ProfileRepls($after: String, $id: Int!) {
-	user(id: $id) {
-		profileRepls(after: $after, count: 100) {
-			# Max per page is 25
-			items {
-				id
-				slug
-				title
-				url
-				description
-				isRenamed
-				isAlwaysOn
-				isProjectFork
-				likeCount
-				language
-				timeCreated
-			}
-			pageInfo {
-				hasNextPage
-				nextCursor
-			}
-		}
-	}
+query ProfileRepls($after: String, $user_id: Int!) {
+    user(id: $user_id) {
+        profileRepls(after: $after, count: 100) {
+            # Max per page is 25
+            items {
+                id
+                slug
+                title
+                url
+                description
+                isRenamed
+                isAlwaysOn
+                isProjectFork
+                likeCount
+                language
+                timeCreated
+            }
+            pageInfo {
+                hasNextPage
+                nextCursor
+            }
+        }
+    }
 }
