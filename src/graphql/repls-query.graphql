@@ -1,0 +1,33 @@
+query ReplList($path: String!, $starred: Boolean, $after: String) {
+    currentUser {
+        id
+        username
+        replFolderByPath(path: $path) {
+            ownerId: userId
+            pathnames
+            parent {
+                pathnames
+            }
+            folders {
+                id
+                name
+                pathnames
+                replsCount
+                folderType
+            }
+            repls(starred: $starred, after: $after) {
+                items {
+                    id
+                    title
+                    isPrivate
+                    slug
+                    url
+                    timeCreated
+                }
+                pageInfo {
+                    nextCursor
+                }
+            }
+        }
+    }
+}

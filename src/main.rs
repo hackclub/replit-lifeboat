@@ -223,7 +223,7 @@ async fn airtable_loop() -> Result<()> {
             error!("Error with `{}`'s download: {err:#?}", user.fields.username);
 
             user.fields.status = ProcessState::ErroredMain;
-            airtable::update_records(vec![user.clone()]).await?;
+            //arst airtable::update_records(vec![user.clone()]).await?;
 
             // user.fields.failed_ids = errored.join(",");
 

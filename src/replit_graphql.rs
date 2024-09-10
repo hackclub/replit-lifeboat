@@ -19,6 +19,7 @@ use crate::{
     crosisdownload::{make_zip, DownloadLocations, DownloadStatus, ReplInfo},
     email::emails::{send_partial_success_email, send_success_email},
     r2,
+    replit::repls::Repl,
 };
 
 static REPLIT_GQL_URL: &str = "https://replit.com/graphql";
@@ -116,59 +117,59 @@ type DateTime = String;
     response_derives = "Debug"
 )]
 pub struct ProfileRepls;
-
 impl ProfileRepls {
-    /// Get one page of repls.
-    pub async fn fetch(
-        token: &String,
-        id: i64,
-        client_opt: Option<Client>,
-        after: Option<String>,
-    ) -> Result<(
-        Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
-        Option<String>,
-    )> {
-        let client = create_client(token, client_opt)?;
+    // /// Get one page of repls.
+    // #[deprecated]
+    // async fn fetch(
+    //     token: &String,
+    //     id: i64,
+    //     client_opt: Option<Client>,
+    //     after: Option<String>,
+    // ) -> Result<(
+    //     Vec<profile_repls::ProfileReplsUserProfileReplsItems>,
+    //     Option<String>,
+    // )> {
+    //     let client = create_client(token, client_opt)?;
 
-        let repls_query = ProfileRepls::build_query(profile_repls::Variables { id, after });
+    //     let repls_query = ProfileRepls::build_query(profile_repls::Variables { id, after });
 
-        let repls_data: String = client
-            .post(REPLIT_GQL_URL)
-            .json(&repls_query)
-            .send()
-            .await?
-            .text()
-            .await?;
-        debug!(
-            "{}:{} Raw text repl data: {repls_data}",
-            std::line!(),
-            std::column!()
-        );
+    //     let repls_data: String = client
+    //         .post(REPLIT_GQL_URL)
+    //         .json(&repls_query)
+    //         .send()
+    //         .await?
+    //         .text()
+    //         .await?;
+    //     debug!(
+    //         "{}:{} Raw text repl data: {repls_data}",
+    //         std::line!(),
+    //         std::column!()
+    //     );
 
-        let repls_data_result =
-            match serde_json::from_str::<Response<profile_repls::ResponseData>>(&repls_data) {
-                Ok(data) => data.data,
-                Err(e) => {
-                    error!("Failed to deserialize JSON: {}", e);
-                    return Err(anyhow::Error::new(e));
-                }
-            };
+    //     let repls_data_result =
+    //         match serde_json::from_str::<Response<profile_repls::ResponseData>>(&repls_data) {
+    //             Ok(data) => data.data,
+    //             Err(e) => {
+    //                 error!("Failed to deserialize JSON: {}", e);
+    //                 return Err(anyhow::Error::new(e));
+    //             }
+    //         };
 
-        let next_page = repls_data_result
-            .as_ref()
-            .and_then(|data| {
-                data.user
-                    .as_ref()
-                    .map(|user| user.profile_repls.page_info.next_cursor.clone())
-            })
-            .ok_or(anyhow::Error::msg("Page Info not found during download"))?;
+    //     let next_page = repls_data_result
+    //         .as_ref()
+    //         .and_then(|data| {
+    //             data.user
+    //                 .as_ref()
+    //                 .map(|user| user.profile_repls.page_info.next_cursor.clone())
+    //         })
+    //         .ok_or(anyhow::Error::msg("Page Info not found during download"))?;
 
-        let repls = repls_data_result
-            .and_then(|data| data.user.map(|user| user.profile_repls.items))
-            .ok_or(anyhow::Error::msg("Repls not found during download"))?;
+    //     let repls = repls_data_result
+    //         .and_then(|data| data.user.map(|user| user.profile_repls.items))
+    //         .ok_or(anyhow::Error::msg("Repls not found during download"))?;
 
-        Ok((repls, next_page))
-    }
+    //     Ok((repls, next_page))
+    // }
 
     pub async fn download(
         token: &String,
@@ -176,30 +177,17 @@ impl ProfileRepls {
     ) -> Result<()> {
         synced_user.fields.status = ProcessState::CollectingRepls;
         synced_user.fields.started_at = Some(chrono::offset::Utc::now());
-        airtable::update_records(vec![synced_user.clone()]).await?;
+        //arst airtable::update_records(vec![synced_user.clone()]).await?;
 
         let client = create_client(token, None)?;
 
         let current_user = QuickUser::fetch(token, Some(client.clone())).await?;
+        log::info!("current user: {:#?}", current_user);
 
         fs::create_dir_all("repls").await?;
         fs::create_dir(format!("repls/{}", current_user.username)).await?;
 
-        let mut repls = Vec::new();
-        let mut cursor = None;
-
-        loop {
-            let (mut page_of_repls, new_cursor) =
-                Self::fetch(token, current_user.id, None, cursor).await?;
-            repls.append(&mut page_of_repls);
-
-            if let Some(next_cursor) = new_cursor {
-                cursor = Some(next_cursor);
-            } else {
-                break;
-            }
-        }
-
+        let repls = Repl::fetch(&token, Some(client.clone())).await?;
         let repl_count = repls.len();
 
         let mut progress = ExportProgress::new(repl_count);
@@ -219,7 +207,7 @@ impl ProfileRepls {
             }
 
             synced_user.fields.status = ProcessState::NoRepls;
-            airtable::update_records(vec![synced_user.clone()]).await?;
+            //arst airtable::update_records(vec![synced_user.clone()]).await?;
             return Ok(());
         }
 
@@ -336,13 +324,13 @@ impl ProfileRepls {
             );
 
             synced_user.fields.repl_count += 1;
-            airtable::update_records(vec![synced_user.clone()]).await?;
+            //arst airtable::update_records(vec![synced_user.clone()]).await?;
             progress.report(&current_user);
         }
 
         progress.completed = true;
         progress.report(&current_user);
-        airtable::update_records(vec![synced_user.clone()]).await?;
+        //arst airtable::update_records(vec![synced_user.clone()]).await?;
 
         let path = format!("repls/{}", current_user.username);
         make_zip(path.clone(), format!("repls/{}.zip", current_user.username)).await?;
@@ -359,11 +347,11 @@ impl ProfileRepls {
         let upload_result = r2::upload(upload_path.clone(), zip_path.clone()).await;
         fs::remove_file(&zip_path).await?;
         synced_user.fields.status = ProcessState::WaitingInR2;
-        airtable::update_records(vec![synced_user.clone()]).await?;
+        //arst airtable::update_records(vec![synced_user.clone()]).await?;
 
         if let Err(upload_err) = upload_result {
             synced_user.fields.status = ProcessState::ErroredR2;
-            airtable::update_records(vec![synced_user.clone()]).await?;
+            //arst airtable::update_records(vec![synced_user.clone()]).await?;
             error!("Failed to upload {upload_path} to R2");
             return Err(upload_err);
         }
@@ -427,8 +415,89 @@ impl ProfileRepls {
             synced_user.fields.failed_ids = errored.join(",");
         }
         synced_user.fields.finished_at = Some(chrono::offset::Utc::now());
-        airtable::update_records(vec![synced_user]).await?;
+        //arst airtable::update_records(vec![synced_user]).await?;
 
+        Ok(())
+    }
+}
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/graphql/schema 7.graphql",
+    query_path = "src/graphql/repls-query.graphql",
+    response_derives = "Debug"
+)]
+pub struct ReplList;
+impl ReplList {
+    /// Get all a user's repls
+    pub async fn fetch(
+        token: &String,
+        client_opt: Option<Client>,
+        after: Option<String>,
+    ) -> Result<()> {
+        /* With this GraphQL query, you get a representation of one level of
+         * the user's repl directory tree, meaning you get a list of repls, and
+         * a list of directories. This function starts from the root path
+         * (where path = ""), collects the (paginated) repls at this level,
+         * then recursively does the same through the directory list. */
+
+        let client = create_client(token, client_opt)?;
+
+        let repls_query = ReplList::build_query(repl_list::Variables {
+            path: "".into(),
+            starred: None,
+            after: None,
+        });
+
+        let repls_data: String = client
+            .post(REPLIT_GQL_URL)
+            .json(&repls_query)
+            .send()
+            .await?
+            .text()
+            .await?;
+        trace!(
+            "{}:{} Raw text repl data: {repls_data}",
+            std::line!(),
+            std::column!()
+        );
+
+        let repls_data_result =
+            match serde_json::from_str::<Response<repl_list::ResponseData>>(&repls_data) {
+                Ok(data) => data.data,
+                Err(e) => {
+                    error!("Failed to deserialize JSON: {}", e);
+                    return Err(anyhow::Error::new(e));
+                }
+            };
+
+        debug!("repls data result: {:#?}", repls_data_result);
+        if let Some(curr) = repls_data_result
+            .map(|r| r.current_user.map(|r| r.repl_folder_by_path))
+            .flatten()
+            .flatten()
+        {
+            info!("curr repls: {:#?}", curr.repls);
+        } else {
+            log::error!("No repls data!")
+        }
+
+        // First, paginate through the repls.
+
+        // let next_page = repls_data_result
+        //     .as_ref()
+        //     .and_then(|data| {
+        //         data.user
+        //             .as_ref()
+        //             .map(|user| user.profile_repls.page_info.next_cursor.clone())
+        //     })
+        //     .ok_or(anyhow::Error::msg("Page Info not found during download"))?;
+
+        // let repls = repls_data_result
+        //     .and_then(|data| data.user.map(|user| user.profile_repls.items))
+        //     .ok_or(anyhow::Error::msg("Repls not found during download"))?;
+
+        // Ok((repls, next_page))
         Ok(())
     }
 }
