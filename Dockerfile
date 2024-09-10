@@ -1,5 +1,5 @@
 # Start with a Rust base image
-FROM rust:1.76 as builder
+FROM rust:latest as builder
 
 # Install protobuf compiler
 RUN apt-get update && apt-get install -y protobuf-compiler
@@ -13,13 +13,13 @@ COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml
 
 # Build dependencies first to cache them
-RUN cargo build --release
-RUN rm src/*.rs
+# RUN cargo build --release
+# RUN rm src/*.rs
 
 COPY ./src ./src
 
 # Build for release
-RUN rm ./target/release/deps/replit_takeout*
+# RUN rm ./target/release/deps/replit_takeout*
 RUN cargo build --release
 
 # Start a new stage with a newer base image
