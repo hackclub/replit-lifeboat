@@ -224,7 +224,6 @@ async fn airtable_loop() -> Result<()> {
 
             user.fields.status = ProcessState::ErroredMain;
             airtable::update_records(vec![user.clone()]).await?;
-            user.fields.failed_ids = errored.join(",");
 
             // send_email(
             //     &user.fields.email,

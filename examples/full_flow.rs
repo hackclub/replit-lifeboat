@@ -42,8 +42,6 @@ async fn main() -> Result<()> {
         user.fields.status = ProcessState::ErroredMain;
         airtable::update_records(vec![user.clone()]).await?;
 
-        user.fields.failed_ids = errored.join(",");
-
         // send_email(
         //     &user.fields.email,
         //     "Your Replit⠕ export is slightly delayed :/".into(),
