@@ -184,6 +184,10 @@ pub enum ProcessState {
     /// The user didn't have any repls to download
     #[serde(rename = "NoRepls")]
     NoRepls,
+
+    /// We took too long and and the token expired.
+    #[serde(rename = "Token expired")]
+    TokenExpired,
 }
 impl Default for ProcessState {
     fn default() -> Self {
@@ -204,6 +208,7 @@ impl std::fmt::Display for ProcessState {
             ProcessState::ErroredMain => "ErroredMain",
             ProcessState::ErroredR2 => "ErroredR2",
             ProcessState::NoRepls => "NoRepls",
+            Self::TokenExpired => "Token expired",
         };
         write!(f, "{}", value)
     }
