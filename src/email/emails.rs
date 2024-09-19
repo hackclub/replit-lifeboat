@@ -1,4 +1,5 @@
 use anyhow::Result;
+use log::info;
 use once_cell::sync::Lazy;
 use reqwest::{
     header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE},
@@ -39,6 +40,7 @@ pub async fn send_greet_email(to: &str, username: &str) -> Result<()> {
     });
 
     send_loop(to, &payload).await?;
+    info!("Sent greet email to {to} ({username})");
 
     Ok(())
 }
@@ -69,6 +71,7 @@ pub async fn send_partial_success_email(
     });
 
     send_loop(to, &payload).await?;
+    info!("Sent partial success email to {to} ({username})");
 
     Ok(())
 }
@@ -90,6 +93,7 @@ pub async fn send_success_email(
     });
 
     send_loop(to, &payload).await?;
+    info!("Sent success email to {to} ({username})");
 
     Ok(())
 }
@@ -104,6 +108,7 @@ pub async fn send_failed_no_repls_email(to: &str, username: &str) -> Result<()> 
     });
 
     send_loop(&to, &payload).await?;
+    info!("Sent failed no repls email to {to} ({username})");
 
     Ok(())
 }
@@ -118,6 +123,7 @@ pub async fn send_failure_email(to: &str, username: &str) -> Result<()> {
     });
 
     send_loop(&to, &payload).await?;
+    info!("Sent failure email to {to} ({username})");
 
     Ok(())
 }

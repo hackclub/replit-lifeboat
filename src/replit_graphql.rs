@@ -195,11 +195,23 @@ impl ProfileRepls {
     ) -> Result<()> {
         synced_user.fields.status = ProcessState::CollectingRepls;
         synced_user.fields.started_at = Some(chrono::offset::Utc::now());
-       airtable::update_records(vec![synced_user.clone()]).await?;
+        airtable::update_records(vec![synced_user.clone()]).await?;
 
         let client = create_client(token, None)?;
 
-        let current_user = QuickUser::fetch(token, Some(client.clone())).await?;
+        let current_user = match QuickUser::fetch(token, Some(client.clone())).await {
+            Ok(user) => user,
+            Err(err) => {
+                synced_user.fields.status = ProcessState::TokenExpired;
+                airtable::update_records(vec![synced_user.clone()]).await?;
+                error!(
+                    "Issue with quickuser fetch - setting as expired token: {:?}",
+                    err
+                );
+                return Ok(());
+            }
+        };
+
         log::info!("current user: {:#?}", current_user);
 
         fs::create_dir_all("repls").await?;
@@ -225,7 +237,7 @@ impl ProfileRepls {
             }
 
             synced_user.fields.status = ProcessState::NoRepls;
-           airtable::update_records(vec![synced_user.clone()]).await?;
+            airtable::update_records(vec![synced_user.clone()]).await?;
             return Ok(());
         }
 
@@ -342,13 +354,13 @@ impl ProfileRepls {
             );
 
             synced_user.fields.repl_count += 1;
-           airtable::update_records(vec![synced_user.clone()]).await?;
+            airtable::update_records(vec![synced_user.clone()]).await?;
             progress.report(&current_user);
         }
 
         progress.completed = true;
         progress.report(&current_user);
-       airtable::update_records(vec![synced_user.clone()]).await?;
+        airtable::update_records(vec![synced_user.clone()]).await?;
 
         let path = format!("repls/{}", current_user.username);
         make_zip(path.clone(), format!("repls/{}.zip", current_user.username)).await?;
@@ -365,11 +377,11 @@ impl ProfileRepls {
         let upload_result = r2::upload(upload_path.clone(), zip_path.clone()).await;
         fs::remove_file(&zip_path).await?;
         synced_user.fields.status = ProcessState::WaitingInR2;
-       airtable::update_records(vec![synced_user.clone()]).await?;
+        airtable::update_records(vec![synced_user.clone()]).await?;
 
         if let Err(upload_err) = upload_result {
             synced_user.fields.status = ProcessState::ErroredR2;
-           airtable::update_records(vec![synced_user.clone()]).await?;
+            airtable::update_records(vec![synced_user.clone()]).await?;
             error!("Failed to upload {upload_path} to R2");
             return Err(upload_err);
         }
