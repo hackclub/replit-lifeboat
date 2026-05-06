@@ -27,7 +27,7 @@ serde = { version = "1.0.208", features = ["derive"] }
 serde_json = "1.0.125"
 time = "0.3.36"
 tokio = { version = "1.39.3", features = ["fs", "macros", "net", "rt-multi-thread"] }
-openssl = { version = "0.10.59", features = ["vendored"] }
+openssl = { version = "0.10.79", features = ["vendored"] }
 chrono = "0.4.38"
 async_zip = { version = "0.0.17", features = ["tokio", "tokio-fs", "deflate", "async-compression"] }
 async-compression = { version = "0.4.12" }
